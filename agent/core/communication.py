@@ -284,10 +284,12 @@ class LinuxServerCommunication:
             return False
     
     async def submit_event(self, event_data: EventData) -> tuple[bool, Optional[Dict], Optional[str]]:
-        """
-        FIXED: Submit event to server with database-compatible payload
-        """
+        """Submit event to server with database-compatible payload"""
         try:
+            # FIX: Validate agent_id before submission
+            if not event_data.agent_id:
+                self.logger.error("❌ CRITICAL: Event missing agent_id - cannot submit to server")
+                return False, None, "Event missing agent_id"
             # Test connection before sending
             if not await self.test_connection():
                 self.logger.debug("📡 Server not connected - skipping event submission")

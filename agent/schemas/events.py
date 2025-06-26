@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from enum import Enum
+import logging
 
 class EventAction(Enum):
     """Event actions matching database expectations"""
@@ -138,6 +139,11 @@ class EventData:
     
     def __post_init__(self):
         """Post-initialization processing to ensure database compatibility"""
+        # FIX: Validate agent_id immediately
+        if not self.agent_id:
+            # Don't raise error here, just log for debugging
+            logger = logging.getLogger(__name__)
+            logger.debug(f"EventData created without agent_id - Type: {self.event_type}, Action: {self.event_action}")
         # Ensure event_action is string value
         if hasattr(self.event_action, 'value'):
             self.event_action = self.event_action.value
@@ -192,18 +198,24 @@ class EventData:
             return f"Linux Event: {self.event_type} - {self.event_action}"
     
     def _prepare_raw_event_data(self):
-        """Prepare raw_event_data as JSON string for database storage"""
+        """Prepare raw_event_data as JSON string for database storage - FIXED"""
         try:
             import json
-            
-            # Collect all additional data
-            raw_data = {
+            # If raw_event_data is already a dict, use it
+            if isinstance(self.raw_event_data, dict):
+                raw_data = self.raw_event_data.copy()
+            elif isinstance(self.raw_event_data, str):
+                try:
+                    raw_data = json.loads(self.raw_event_data)
+                except:
+                    raw_data = {'original_data': self.raw_event_data}
+            else:
+                raw_data = {}
+            raw_data.update({
                 'platform': 'linux',
                 'event_timestamp': self.event_timestamp.isoformat(),
                 'description': self.description
-            }
-            
-            # Add optional fields if they exist
+            })
             optional_fields = [
                 'hostname', 'cpu_usage', 'memory_usage', 'disk_usage',
                 'network_usage', 'process_uid', 'process_gid',
@@ -216,22 +228,20 @@ class EventData:
                 'connection_state', 'bytes_sent', 'bytes_received',
                 'login_source_ip', 'login_terminal', 'login_session_id'
             ]
-            
             for field in optional_fields:
                 value = getattr(self, field, None)
                 if value is not None:
                     raw_data[field] = value
-            
-            # Convert to JSON string
             self.raw_event_data = json.dumps(raw_data, default=str)
-            
         except Exception as e:
-            # Fallback to simple string
             self.raw_event_data = f'{{"platform": "linux", "error": "{str(e)}"}}'
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for API submission (snake_case field names, no registry fields for Linux)"""
+        """Convert to dictionary for API submission"""
         try:
+            # FIX: Validate agent_id before serialization
+            if not self.agent_id:
+                return {'error': 'Event missing required agent_id field'}
             data = {
                 # REQUIRED fields (snake_case)
                 'agent_id': self.agent_id,

@@ -373,33 +373,32 @@ class LinuxNetworkCollector(LinuxBaseCollector):
             return False
     
     async def _create_connection_established_event(self, conn, conn_info: Dict):
-        """Create connection established event"""
+        """Create connection established event with proper agent_id - FIXED"""
         try:
+            raw_event_data = {
+                'platform': 'linux',
+                'event_subtype': 'connection_established',
+                'connection_info': conn_info,
+                'service_name': conn_info.get('service_name', 'Unknown'),
+                'is_well_known_port': conn_info.get('is_well_known_port', False),
+                'monitoring_method': 'psutil_net_connections'
+            }
             return EventData(
                 event_type="Network",
                 event_action=EventAction.CONNECT,
                 event_timestamp=datetime.now(),
                 severity="Medium" if conn_info.get('is_suspicious') else "Info",
-                
+                agent_id=self.agent_id,
                 source_ip=conn.laddr.ip if conn.laddr else "0.0.0.0",
                 source_port=conn.laddr.port if conn.laddr else 0,
                 destination_ip=conn.raddr.ip if conn.raddr else "0.0.0.0",
                 destination_port=conn.raddr.port if conn.raddr else 0,
                 protocol='TCP' if conn.type == socket.SOCK_STREAM else 'UDP',
                 direction=conn_info.get('direction', 'Unknown'),
-                
                 process_id=conn.pid,
                 process_name=conn_info.get('process_name'),
-                
                 description=f"🐧 LINUX CONNECTION ESTABLISHED: {conn.laddr.ip}:{conn.laddr.port} -> {conn.raddr.ip}:{conn.raddr.port}",
-                raw_event_data={
-                    'platform': 'linux',
-                    'event_subtype': 'connection_established',
-                    'connection_info': conn_info,
-                    'service_name': conn_info.get('service_name', 'Unknown'),
-                    'is_well_known_port': conn_info.get('is_well_known_port', False),
-                    'monitoring_method': 'psutil_net_connections'
-                }
+                raw_event_data=raw_event_data
             )
         except Exception as e:
             self.logger.error(f"❌ Connection established event creation failed: {e}")

@@ -340,40 +340,37 @@ class LinuxProcessCollector(LinuxBaseCollector):
         return events
     
     async def _create_process_start_event(self, proc_info: Dict):
-        """Create process start event"""
+        """Create process start event with proper agent_id - FIXED"""
         try:
             process_name = proc_info.get('name', 'Unknown')
             severity = self._determine_process_severity(proc_info)
-            
-            # Get enhanced command line
             cmdline = proc_info.get('cmdline_string') or ' '.join(proc_info.get('cmdline', []))
-            
+            raw_event_data = {
+                'platform': 'linux',
+                'process_category': self._get_process_category(process_name),
+                'is_interesting': self._is_interesting_process(process_name),
+                'fd_count': proc_info.get('fd_count', 0),
+                'threads': proc_info.get('threads', '1'),
+                'vm_size': proc_info.get('vm_size', '0'),
+                'create_time': proc_info.get('create_time'),
+                'proc_status': proc_info.get('proc_status', {}),
+                'cmdline_enhanced': proc_info.get('cmdline_enhanced', []),
+                'monitoring_method': 'psutil_proc_iter'
+            }
             return EventData(
                 event_type="Process",
                 event_action=EventAction.START,
                 event_timestamp=datetime.now(),
                 severity=severity,
-                
+                agent_id=self.agent_id,
                 process_id=proc_info.get('pid'),
                 process_name=process_name,
                 process_path=proc_info.get('exe'),
                 command_line=cmdline,
                 parent_pid=proc_info.get('ppid'),
                 process_user=proc_info.get('username'),
-                
                 description=f"🐧 LINUX PROCESS STARTED: {process_name} (PID: {proc_info.get('pid')})",
-                raw_event_data={
-                    'platform': 'linux',
-                    'process_category': self._get_process_category(process_name),
-                    'is_interesting': self._is_interesting_process(process_name),
-                    'fd_count': proc_info.get('fd_count', 0),
-                    'threads': proc_info.get('threads', '1'),
-                    'vm_size': proc_info.get('vm_size', '0'),
-                    'create_time': proc_info.get('create_time'),
-                    'proc_status': proc_info.get('proc_status', {}),
-                    'cmdline_enhanced': proc_info.get('cmdline_enhanced', []),
-                    'monitoring_method': 'psutil_proc_iter'
-                }
+                raw_event_data=raw_event_data
             )
         except Exception as e:
             self.logger.error(f"❌ Process start event creation failed: {e}")

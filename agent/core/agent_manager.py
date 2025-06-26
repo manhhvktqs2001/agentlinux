@@ -267,47 +267,37 @@ class LinuxAgentManager:
         """Start the Linux agent"""
         try:
             self.logger.info("🚀 Starting Linux agent...")
-            
-            # Register with server
+            # Register with server FIRST
             await self._register_with_server()
-            
             # Ensure agent_id is available
             if not self.agent_id:
                 raise Exception("Linux agent registration failed - no agent_id received")
-            
-            # Set agent_id for event processor
+            self.logger.info(f"✅ Agent registered with ID: {self.agent_id}")
+            # Set agent_id for event processor BEFORE starting
             if self.event_processor and self.agent_id:
                 self.event_processor.set_agent_id(self.agent_id)
                 self.logger.info(f"[EVENT_PROCESSOR] Set AgentID: {self.agent_id}")
-            
+            # Set agent_id on all collectors BEFORE starting them
+            for name, collector in self.collectors.items():
+                if hasattr(collector, 'set_agent_id') and self.agent_id:
+                    collector.set_agent_id(self.agent_id)
+                    self.logger.info(f"[{name.upper()}_COLLECTOR] Set AgentID: {self.agent_id}")
             # Start event processor
             await self.event_processor.start()
-            
-            # Set agent_id on all collectors
-            for name, collector in self.collectors.items():
-                if hasattr(collector, 'set_agent_id'):
-                    collector.set_agent_id(self.agent_id)
-                    self.logger.debug(f"[{name.upper()}_COLLECTOR] Set AgentID: {self.agent_id}")
-            
-            # Start collectors
+            # Start collectors AFTER agent_id is set
             await self._start_collectors()
-            
-            # Start monitoring
+            # Set final running state
             self.is_running = True
             self.is_monitoring = True
             self.start_time = datetime.now()
-            
             # Start heartbeat task
             asyncio.create_task(self._heartbeat_loop())
-            
             # Start Linux-specific monitoring tasks
             asyncio.create_task(self._linux_system_monitor())
-            
             self.logger.info(f"✅ Linux agent started successfully")
             self.logger.info(f"   🆔 Agent ID: {self.agent_id}")
             self.logger.info(f"   📊 Collectors: {list(self.collectors.keys())}")
             self.logger.info(f"   🐧 Platform: Linux ({self.system_info.get('distribution', 'Unknown')})")
-            
         except Exception as e:
             self.logger.error(f"❌ Linux agent start failed: {e}")
             raise

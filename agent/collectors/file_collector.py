@@ -557,76 +557,59 @@ class LinuxFileCollector(LinuxBaseCollector):
             return False
     
     async def _create_file_event(self, action: str, file_path: str, old_path: str = None):
-        """Create file system event"""
+        """Create file system event with proper agent_id - FIXED"""
         try:
-            # Determine event action
             action_map = {
                 'created': EventAction.CREATE,
                 'modified': EventAction.MODIFY,
                 'deleted': EventAction.DELETE,
-                'moved': EventAction.MODIFY  # Treat move as modify
+                'moved': EventAction.MODIFY
             }
-            
             event_action = action_map.get(action, EventAction.ACCESS)
-            
-            # Get file information
             file_info = None
             if action != 'deleted':
                 file_info = self._get_linux_file_info(file_path)
-            
-            # Determine severity
             severity = self._determine_file_severity(file_path, action, file_info)
-            
-            # Create description
             file_name = os.path.basename(file_path)
             if action == 'moved' and old_path:
                 description = f"🐧 LINUX FILE MOVED: {os.path.basename(old_path)} -> {file_name}"
             else:
                 description = f"🐧 LINUX FILE {action.upper()}: {file_name}"
-            
-            # Create event data
-            event_data = {
-                'event_type': 'File',
-                'event_action': event_action,
-                'event_timestamp': datetime.now(),
-                'severity': severity,
-                'file_path': file_path,
-                'file_name': file_name,
-                'description': description,
-                'raw_event_data': {
-                    'platform': 'linux',
-                    'action': action,
-                    'is_interesting': self._is_interesting_file(file_path),
-                    'is_suspicious': self._is_suspicious_file(file_path),
-                    'monitoring_method': 'inotify' if self.inotify_enabled else 'polling'
-                }
+            # Ensure raw_event_data is a dictionary
+            raw_event_data = {
+                'platform': 'linux',
+                'action': action,
+                'is_interesting': self._is_interesting_file(file_path),
+                'is_suspicious': self._is_suspicious_file(file_path),
+                'monitoring_method': 'inotify' if self.inotify_enabled else 'polling'
             }
-            
-            # Add file information if available
             if file_info:
-                event_data.update({
-                    'file_size': file_info.get('size', 0),
-                    'file_extension': Path(file_path).suffix
-                })
-                event_data['raw_event_data']['file_info'] = file_info
-            
-            # Add old path for move events
+                raw_event_data['file_info'] = file_info
             if old_path:
-                event_data['raw_event_data']['old_path'] = old_path
-            
-            # Check for large file
+                raw_event_data['old_path'] = old_path
             if file_info and file_info.get('size', 0) > self.large_file_threshold:
                 self.stats['large_file_events'] += 1
-                event_data['raw_event_data']['large_file'] = True
-            
-            # Check for suspicious file
+                raw_event_data['large_file'] = True
+            event_data = EventData(
+                event_type="File",
+                event_action=event_action,
+                event_timestamp=datetime.now(),
+                severity=severity,
+                agent_id=self.agent_id,
+                file_path=file_path,
+                file_name=file_name,
+                file_size=file_info.get('size', 0) if file_info else 0,
+                file_extension=Path(file_path).suffix,
+                description=description,
+                raw_event_data=raw_event_data
+            )
             if self._is_suspicious_file(file_path):
                 self.stats['suspicious_file_events'] += 1
-                event_data['severity'] = 'High'
-                event_data['raw_event_data']['suspicious_reason'] = 'suspicious_file_pattern'
-            
-            return EventData(**event_data)
-            
+                event_data.severity = 'High'
+                # Update dictionary properly
+                if isinstance(event_data.raw_event_data, dict):
+                    event_data.raw_event_data['suspicious_reason'] = 'suspicious_file_pattern'
+            return event_data
         except Exception as e:
             self.logger.error(f"❌ File event creation failed: {e}")
             return None

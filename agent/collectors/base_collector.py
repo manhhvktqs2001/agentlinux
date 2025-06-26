@@ -269,55 +269,52 @@ class LinuxBaseCollector(ABC):
                 await asyncio.sleep(2)
     
     async def _send_event_immediately(self, event_data):
-        """Send event immediately to event processor"""
+        """Send event immediately to event processor - FIXED"""
         try:
-            # Ensure agent_id is set
             if self.agent_id and not hasattr(event_data, 'agent_id'):
                 event_data.agent_id = self.agent_id
-            
-            # Add Linux-specific metadata
+            elif self.agent_id and not event_data.agent_id:
+                event_data.agent_id = self.agent_id
+            if not event_data.agent_id:
+                self.logger.error(f"❌ CRITICAL: Event missing agent_id - Type: {event_data.event_type}, Action: {event_data.event_action}")
+                self.collection_errors += 1
+                return
+            # Safely update raw_event_data
             if hasattr(event_data, 'raw_event_data'):
-                if not event_data.raw_event_data:
-                    event_data.raw_event_data = {}
-                elif isinstance(event_data.raw_event_data, str):
+                import json
+                if isinstance(event_data.raw_event_data, str):
                     try:
-                        event_data.raw_event_data = json.loads(event_data.raw_event_data)
-                    except Exception:
-                        event_data.raw_event_data = {'original_data': event_data.raw_event_data}
-                event_data.raw_event_data.update({
+                        raw_data = json.loads(event_data.raw_event_data)
+                    except:
+                        raw_data = {'original_data': event_data.raw_event_data}
+                elif isinstance(event_data.raw_event_data, dict):
+                    raw_data = event_data.raw_event_data.copy()
+                else:
+                    raw_data = {}
+                raw_data.update({
                     'platform': 'linux',
                     'collector': self.collector_name,
                     'collection_time': time.time(),
-                    'has_root_privileges': self.has_required_privileges
+                    'has_root_privileges': self.has_required_privileges,
+                    'agent_id_set_by': 'collector'
                 })
-            
-            # Log the event
+                # Only serialize if original was a string
+                if isinstance(event_data.raw_event_data, str):
+                    event_data.raw_event_data = json.dumps(raw_data, default=str)
+                else:
+                    event_data.raw_event_data = raw_data
             event_type = getattr(event_data, 'event_type', 'Unknown')
             event_action = getattr(event_data, 'event_action', 'Unknown')
             process_name = getattr(event_data, 'process_name', 'Unknown')
-            
-            self.logger.info(f"🐧 Linux {event_type} Event: {event_action} - {process_name}")
-            
-            # Check if event processor is available
+            self.logger.info(f"🐧 Linux {event_type} Event: {event_action} - {process_name} (Agent: {event_data.agent_id[:8]}...)")
             if not self.event_processor:
                 self.logger.debug("⚠️ Event processor not available")
                 self.collection_errors += 1
                 return
-            
-            # Check offline mode
-            if (hasattr(self.event_processor, 'communication') and 
-                self.event_processor.communication and 
-                self.event_processor.communication.offline_mode):
-                self.logger.debug(f"📱 Event logged (offline): {event_type} - {event_action}")
-                return
-            
-            # Send event
             await self.event_processor.add_event(event_data)
             self.events_sent += 1
             self.events_collected += 1
-            
             self.logger.debug(f"📤 Linux event sent: {event_type} - {event_action}")
-                
         except Exception as e:
             self.logger.error(f"❌ Event sending failed: {e}")
             self.collection_errors += 1
