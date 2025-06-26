@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Linux EDR Agent - Main Entry Point
-Interactive mode with console output and privilege checking
+Linux EDR Agent - Main Entry Point (FIXED)
+Interactive mode with console output and better error handling
 """
 
 import asyncio
@@ -33,6 +33,14 @@ def check_root_privileges():
         print("  - Container and service activities")
         print("=" * 60)
         print("Please run with sudo:")
+        print(f"  sudo python3 {sys.argv[0]}")
+        print("=" * 60)
+        print("📋 Quick Fix Commands:")
+        print("  # Install dependencies first:")
+        print("  sudo apt update && sudo apt install python3-pip python3-psutil python3-aiohttp python3-yaml")
+        print("  # Or for RedHat/CentOS:")
+        print("  sudo yum install python3-pip python3-psutil python3-aiohttp python3-pyyaml")
+        print("  # Then run the agent:")
         print(f"  sudo python3 {sys.argv[0]}")
         print("=" * 60)
         sys.exit(1)
@@ -94,6 +102,86 @@ def setup_logging():
     logging.getLogger('urllib3').setLevel(logging.WARNING)
     logging.getLogger('requests').setLevel(logging.WARNING)
     logging.getLogger('asyncio').setLevel(logging.WARNING)
+
+def check_dependencies():
+    """Check if required Python modules are available"""
+    required_modules = {
+        'psutil': 'python3-psutil',
+        'aiohttp': 'python3-aiohttp', 
+        'yaml': 'python3-yaml',
+        'asyncio': 'built-in'
+    }
+    
+    missing_modules = []
+    
+    for module, package in required_modules.items():
+        try:
+            if module == 'yaml':
+                import yaml
+            else:
+                __import__(module)
+        except ImportError:
+            missing_modules.append((module, package))
+    
+    if missing_modules:
+        print("❌ Missing required Python modules:")
+        for module, package in missing_modules:
+            print(f"   - {module} (install: {package})")
+        print("\n📦 Install missing dependencies:")
+        print("   # Ubuntu/Debian:")
+        print("   sudo apt update")
+        print("   sudo apt install " + " ".join([pkg for _, pkg in missing_modules if pkg != 'built-in']))
+        print("\n   # RedHat/CentOS:")
+        print("   sudo yum install " + " ".join([pkg for _, pkg in missing_modules if pkg != 'built-in']))
+        print("\n   # Or using pip:")
+        print("   sudo pip3 install " + " ".join([mod for mod, _ in missing_modules if _ != 'built-in']))
+        return False
+    
+    return True
+
+def create_required_files():
+    """Create required configuration files if they don't exist"""
+    try:
+        # Create config directory
+        config_dir = Path(__file__).parent / 'config'
+        config_dir.mkdir(exist_ok=True)
+        
+        # Create basic config file if it doesn't exist
+        config_file = config_dir / 'agent_config.yaml'
+        if not config_file.exists():
+            print("📋 Creating basic configuration file...")
+            basic_config = """# Basic Linux EDR Agent Configuration
+agent:
+  name: 'EDR-Agent-Linux'
+  version: '2.1.0-Linux'
+  platform: 'linux'
+  heartbeat_interval: 30
+
+server:
+  host: 'localhost'
+  port: 5000
+  auth_token: 'edr_agent_auth_2024'
+
+collection:
+  enabled: true
+  collect_processes: true
+  collect_files: true
+  collect_network: true
+
+logging:
+  level: 'INFO'
+  console_enabled: true
+  log_directory: './logs'
+"""
+            with open(config_file, 'w') as f:
+                f.write(basic_config)
+            print(f"✅ Created basic config: {config_file}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to create required files: {e}")
+        return False
 
 class LinuxEDRAgent:
     """Linux EDR Agent with continuous monitoring capabilities"""
@@ -158,32 +246,45 @@ class LinuxEDRAgent:
             # Confirm root privileges
             self.logger.info("✅ Running with root privileges - Full monitoring enabled")
             
-            # Import required modules
-            from agent.core.config_manager import ConfigManager
-            from agent.core.agent_manager import LinuxAgentManager
-            
-            # Setup configuration
-            self.logger.info("📋 Creating configuration manager...")
-            self.config_manager = ConfigManager()
-            
-            self.logger.info("📋 Loading Linux-specific configuration...")
-            await self.config_manager.load_config()
-            
-            # Initialize agent manager
-            self.logger.info("🎯 Creating Linux agent manager...")
-            self.agent_manager = LinuxAgentManager(self.config_manager)
-            
-            self.logger.info("🎯 Initializing Linux agent manager...")
-            await self.agent_manager.initialize()
+            try:
+                # Import required modules with better error handling
+                from agent.core.config_manager import ConfigManager
+                from agent.core.agent_manager import LinuxAgentManager
+                
+                # Setup configuration
+                self.logger.info("📋 Creating configuration manager...")
+                self.config_manager = ConfigManager()
+                
+                self.logger.info("📋 Loading Linux-specific configuration...")
+                await self.config_manager.load_config()
+                
+                # Initialize agent manager
+                self.logger.info("🎯 Creating Linux agent manager...")
+                self.agent_manager = LinuxAgentManager(self.config_manager)
+                
+                self.logger.info("🎯 Initializing Linux agent manager...")
+                await self.agent_manager.initialize()
+                
+            except ImportError as e:
+                self.logger.error(f"❌ Import error: {e}")
+                self.logger.error("💡 This usually means missing dependencies or incorrect file structure")
+                self.logger.error("   Check that all required files are present and dependencies are installed")
+                raise
+            except Exception as e:
+                self.logger.error(f"❌ Configuration error: {e}")
+                self.logger.error("💡 Check your configuration files and file permissions")
+                raise
             
             self.logger.info("✅ Linux EDR Agent initialized successfully")
             self.logger.info("=" * 60)
             
-        except ImportError as e:
-            self.logger.error(f"❌ Import error during initialization: {e}")
-            raise
         except Exception as e:
             self.logger.error(f"❌ Failed to initialize Linux EDR Agent: {e}")
+            self.logger.error("🔧 Troubleshooting steps:")
+            self.logger.error("   1. Check all dependencies are installed")
+            self.logger.error("   2. Verify configuration files exist")
+            self.logger.error("   3. Check file permissions")
+            self.logger.error("   4. Ensure running with root privileges")
             raise
     
     async def start(self):
@@ -257,7 +358,7 @@ class LinuxEDRAgent:
             while self.is_running:
                 try:
                     # Get current statistics
-                    if self.agent_manager and self.agent_manager.event_processor:
+                    if self.agent_manager and hasattr(self.agent_manager, 'event_processor') and self.agent_manager.event_processor:
                         stats = self.agent_manager.event_processor.get_stats()
                         
                         # Update performance stats
@@ -349,7 +450,7 @@ async def main():
         await agent.start()
         
         # Main monitoring loop
-        while True:
+        while agent.is_running:
             try:
                 # Normal monitoring - just keep the agent running
                 await asyncio.sleep(1)
@@ -369,6 +470,7 @@ async def main():
         logger.info("🛑 Received interrupt signal, stopping Linux agent...")
     except Exception as e:
         logger.error(f"❌ Linux agent error: {e}", exc_info=True)
+        logger.error("🔧 Check the troubleshooting section in the documentation")
     finally:
         await agent.stop()
 
@@ -380,11 +482,26 @@ if __name__ == "__main__":
         # Check root privileges first
         check_root_privileges()
         
+        # Check dependencies
+        print("🔍 Checking dependencies...")
+        if not check_dependencies():
+            print("❌ Missing dependencies. Please install them first.")
+            sys.exit(1)
+        
         # Setup imports
         print("🔧 Setting up import paths...")
         if not setup_imports():
             print("❌ Failed to setup import paths")
             sys.exit(1)
+        
+        # Create required files
+        print("📁 Creating required files...")
+        if not create_required_files():
+            print("❌ Failed to create required files")
+            sys.exit(1)
+        
+        print("✅ All checks passed. Starting agent...")
+        print("=" * 60)
         
         # Run the agent
         asyncio.run(main())
@@ -393,6 +510,8 @@ if __name__ == "__main__":
         print("\n🛑 Linux agent stopped by user")
     except Exception as e:
         print(f"❌ Fatal error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
     finally:
         print("\n" + "=" * 60)
