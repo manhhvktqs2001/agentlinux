@@ -1,7 +1,7 @@
-# agent/schemas/agent_data.py - Linux Agent Data Schemas
+# agent/schemas/agent_data.py - FIXED Linux Agent Data Schemas
 """
-Linux Agent Data Schemas - Define agent registration and communication structures
-Optimized for Linux platform with enhanced system information
+Linux Agent Data Schemas - FIXED TO MATCH DATABASE SCHEMA
+Define agent registration and communication structures compatible with EDR_System database
 """
 
 from dataclasses import dataclass, field
@@ -11,425 +11,34 @@ import platform
 import os
 
 @dataclass
-class AgentConfigurationData:
-    """Linux Agent Configuration Data"""
-    
-    # Agent settings
-    agent_id: str
-    heartbeat_interval: int = 30
-    event_batch_size: int = 100
-    event_queue_size: int = 2000
-    
-    # Collection settings
-    collect_processes: bool = True
-    collect_files: bool = True
-    collect_network: bool = True
-    collect_authentication: bool = True
-    collect_system_events: bool = True
-    
-    # Linux-specific collection settings
-    collect_audit_logs: bool = True
-    collect_syslog: bool = True
-    collect_containers: bool = True
-    monitor_systemd: bool = True
-    use_inotify: bool = True
-    
-    # Performance settings
-    max_cpu_usage: float = 25.0
-    max_memory_usage: int = 512  # MB
-    polling_interval: float = 2.0
-    
-    # Security settings
-    threat_detection_enabled: bool = True
-    local_rules_enabled: bool = True
-    behavior_analysis_enabled: bool = True
-    
-    # Notification settings
-    notifications_enabled: bool = True
-    alert_threshold: int = 70
-    
-    # File monitoring paths
-    monitor_paths: Optional[List[str]] = field(default_factory=lambda: [
-        '/etc', '/usr/bin', '/usr/sbin', '/bin', '/sbin', '/home', '/tmp', '/var/tmp', '/opt'
-    ])
-    
-    # Exclude patterns
-    exclude_paths: Optional[List[str]] = field(default_factory=lambda: [
-        '/proc', '/sys', '/dev', '/run', '/var/cache'
-    ])
-    
-    exclude_processes: Optional[List[str]] = field(default_factory=lambda: [
-        'kthreadd', 'ksoftirqd', 'migration', 'rcu_'
-    ])
-    
-    # Additional configuration
-    custom_settings: Optional[Dict[str, Any]] = field(default_factory=dict)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization"""
-        try:
-            data = {}
-            for field_name, field_value in self.__dict__.items():
-                if field_value is not None:
-                    if isinstance(field_value, (list, dict)):
-                        data[field_name] = field_value
-                    else:
-                        data[field_name] = field_value
-            return data
-        except Exception as e:
-            return {'error': str(e), 'agent_id': self.agent_id}
-
-@dataclass
-class AgentUpdateData:
-    """Linux Agent Update Data"""
-    
-    # Update information
-    agent_id: str
-    current_version: str
-    available_version: str
-    update_required: bool = False
-    
-    # Update details
-    update_type: str = "minor"  # major, minor, patch, security
-    update_size: Optional[int] = None  # bytes
-    update_url: Optional[str] = None
-    update_checksum: Optional[str] = None
-    
-    # Installation information
-    install_path: Optional[str] = None
-    backup_required: bool = True
-    restart_required: bool = False
-    
-    # Compatibility information
-    os_compatibility: Optional[List[str]] = field(default_factory=list)
-    architecture_compatibility: Optional[List[str]] = field(default_factory=list)
-    
-    # Update metadata
-    release_notes: Optional[str] = None
-    security_fixes: Optional[List[str]] = field(default_factory=list)
-    new_features: Optional[List[str]] = field(default_factory=list)
-    
-    # Scheduling
-    scheduled_time: Optional[datetime] = None
-    maintenance_window: Optional[Dict[str, str]] = field(default_factory=dict)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization"""
-        try:
-            data = {}
-            for field_name, field_value in self.__dict__.items():
-                if field_value is not None:
-                    if isinstance(field_value, datetime):
-                        data[field_name] = field_value.isoformat()
-                    elif isinstance(field_value, (list, dict)):
-                        data[field_name] = field_value
-                    else:
-                        data[field_name] = field_value
-            return data
-        except Exception as e:
-            return {'error': str(e), 'agent_id': self.agent_id}
-
-# Utility functions for agent data handling
-
-def create_linux_registration_data(hostname: str, ip_address: str, **kwargs) -> AgentRegistrationData:
-    """Create Linux agent registration data with defaults"""
-    try:
-        # Get system information
-        os_info = f"Linux {platform.system()} {platform.release()}"
-        
-        return AgentRegistrationData(
-            hostname=hostname,
-            ip_address=ip_address,
-            operating_system=os_info,
-            os_version=platform.release(),
-            architecture=platform.machine(),
-            agent_version="2.1.0-Linux",
-            **kwargs
-        )
-    except Exception as e:
-        # Return minimal data on error
-        return AgentRegistrationData(
-            hostname=hostname or "unknown",
-            ip_address=ip_address or "0.0.0.0",
-            operating_system="Linux Unknown",
-            os_version="Unknown",
-            architecture="Unknown",
-            agent_version="2.1.0-Linux"
-        )
-
-def create_linux_heartbeat_data(agent_id: str, **kwargs) -> AgentHeartbeatData:
-    """Create Linux agent heartbeat data with system metrics"""
-    try:
-        # Get current system metrics
-        cpu_usage = 0.0
-        memory_usage = 0.0
-        disk_usage = 0.0
-        
-        try:
-            import psutil
-            cpu_usage = psutil.cpu_percent(interval=1)
-            memory = psutil.virtual_memory()
-            memory_usage = memory.percent
-            disk = psutil.disk_usage('/')
-            disk_usage = disk.percent
-        except ImportError:
-            pass
-        
-        return AgentHeartbeatData(
-            agent_id=agent_id,
-            cpu_usage=cpu_usage,
-            memory_usage=memory_usage,
-            disk_usage=disk_usage,
-            **kwargs
-        )
-    except Exception as e:
-        # Return minimal heartbeat on error
-        return AgentHeartbeatData(
-            agent_id=agent_id,
-            status="Error",
-            metadata={'error': str(e)}
-        )
-
-def validate_agent_data(data: AgentRegistrationData) -> tuple[bool, str]:
-    """Validate agent registration data"""
-    try:
-        # Check required fields
-        if not data.hostname:
-            return False, "Missing hostname"
-        
-        if not data.ip_address:
-            return False, "Missing IP address"
-        
-        if not data.operating_system:
-            return False, "Missing operating system"
-        
-        if not data.agent_version:
-            return False, "Missing agent version"
-        
-        # Validate IP address format
-        try:
-            parts = data.ip_address.split('.')
-            if len(parts) != 4:
-                return False, "Invalid IP address format"
-            for part in parts:
-                if not 0 <= int(part) <= 255:
-                    return False, "Invalid IP address range"
-        except:
-            return False, "Invalid IP address"
-        
-        # Validate hostname
-        if len(data.hostname) > 255:
-            return False, "Hostname too long"
-        
-        # Check for Linux platform
-        if 'linux' not in data.operating_system.lower():
-            return False, "Not a Linux system"
-        
-        return True, "Valid"
-        
-    except Exception as e:
-        return False, f"Validation error: {e}"
-
-def get_system_information() -> Dict[str, Any]:
-    """Get comprehensive Linux system information"""
-    try:
-        info = {
-            'platform': 'linux',
-            'hostname': platform.node(),
-            'architecture': platform.machine(),
-            'kernel': platform.release(),
-            'python_version': platform.python_version(),
-            'processor': platform.processor(),
-            'system': platform.system(),
-            'version': platform.version()
-        }
-        
-        # Get distribution information
-        try:
-            with open('/etc/os-release', 'r') as f:
-                for line in f:
-                    if line.startswith('NAME='):
-                        info['distribution_name'] = line.split('=')[1].strip().strip('"')
-                    elif line.startswith('VERSION='):
-                        info['distribution_version'] = line.split('=')[1].strip().strip('"')
-                    elif line.startswith('ID='):
-                        info['distribution_id'] = line.split('=')[1].strip().strip('"')
-                    elif line.startswith('VERSION_ID='):
-                        info['distribution_version_id'] = line.split('=')[1].strip().strip('"')
-        except:
-            info['distribution_name'] = 'Unknown'
-            info['distribution_version'] = 'Unknown'
-        
-        # Get CPU information
-        try:
-            import psutil
-            info['cpu_count'] = psutil.cpu_count()
-            info['cpu_count_physical'] = psutil.cpu_count(logical=False)
-            info['cpu_freq'] = psutil.cpu_freq()._asdict() if psutil.cpu_freq() else {}
-        except ImportError:
-            try:
-                info['cpu_count'] = os.cpu_count()
-            except:
-                info['cpu_count'] = 1
-        
-        # Get memory information
-        try:
-            import psutil
-            memory = psutil.virtual_memory()
-            info['memory_total'] = memory.total
-            info['memory_available'] = memory.available
-        except ImportError:
-            try:
-                with open('/proc/meminfo', 'r') as f:
-                    for line in f:
-                        if line.startswith('MemTotal:'):
-                            info['memory_total'] = int(line.split()[1]) * 1024
-                        elif line.startswith('MemAvailable:'):
-                            info['memory_available'] = int(line.split()[1]) * 1024
-            except:
-                pass
-        
-        # Get disk information
-        try:
-            import psutil
-            disk = psutil.disk_usage('/')
-            info['disk_total'] = disk.total
-            info['disk_free'] = disk.free
-        except ImportError:
-            try:
-                import shutil
-                disk_total, disk_used, disk_free = shutil.disk_usage('/')
-                info['disk_total'] = disk_total
-                info['disk_free'] = disk_free
-            except:
-                pass
-        
-        # Get network interfaces
-        try:
-            import psutil
-            interfaces = psutil.net_if_addrs()
-            info['network_interfaces'] = list(interfaces.keys())
-        except ImportError:
-            try:
-                import socket
-                hostname = socket.gethostname()
-                info['hostname_resolved'] = socket.gethostbyname(hostname)
-            except:
-                pass
-        
-        # Get uptime
-        try:
-            with open('/proc/uptime', 'r') as f:
-                uptime_seconds = float(f.read().split()[0])
-                info['uptime_seconds'] = uptime_seconds
-                info['uptime_days'] = uptime_seconds / 86400
-        except:
-            pass
-        
-        # Get load average
-        try:
-            info['load_average'] = os.getloadavg()
-        except:
-            pass
-        
-        # Check for containerization
-        info['is_container'] = os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv')
-        
-        # Check for virtualization
-        try:
-            with open('/proc/cpuinfo', 'r') as f:
-                cpuinfo = f.read()
-                if 'hypervisor' in cpuinfo:
-                    info['is_virtualized'] = True
-                else:
-                    info['is_virtualized'] = False
-        except:
-            info['is_virtualized'] = False
-        
-        return info
-        
-    except Exception as e:
-        return {
-            'platform': 'linux',
-            'error': str(e),
-            'hostname': platform.node(),
-            'architecture': platform.machine()
-        }
-
-def get_agent_capabilities() -> List[str]:
-    """Get list of Linux agent capabilities"""
-    capabilities = [
-        'process_monitoring',
-        'file_monitoring', 
-        'network_monitoring',
-        'authentication_monitoring',
-        'system_monitoring',
-        'linux_specific_monitoring'
-    ]
-    
-    try:
-        # Check for root privileges
-        if os.geteuid() == 0:
-            capabilities.extend([
-                'privileged_monitoring',
-                'kernel_monitoring',
-                'audit_monitoring',
-                'container_monitoring'
-            ])
-        
-        # Check for specific tools and features
-        if os.path.exists('/proc/sys/fs/inotify'):
-            capabilities.append('inotify_monitoring')
-        
-        if os.path.exists('/var/log/audit'):
-            capabilities.append('audit_log_access')
-        
-        # Check for container runtimes
-        import subprocess
-        try:
-            subprocess.run(['which', 'docker'], capture_output=True, check=True)
-            capabilities.append('docker_monitoring')
-        except:
-            pass
-        
-        try:
-            subprocess.run(['which', 'podman'], capture_output=True, check=True)
-            capabilities.append('podman_monitoring')
-        except:
-            pass
-        
-        # Check for systemd
-        try:
-            subprocess.run(['which', 'systemctl'], capture_output=True, check=True)
-            capabilities.append('systemd_monitoring')
-        except:
-            pass
-        
-    except Exception:
-        pass
-    
-    return capabilities
-
-@dataclass
 class AgentRegistrationData:
-    """Linux Agent Registration Data"""
+    """
+    Linux Agent Registration Data - FIXED TO MATCH DATABASE SCHEMA
+    Maps to Agents table in EDR_System database
+    """
     
-    # Basic agent information
-    hostname: str
-    ip_address: str
-    operating_system: str
-    os_version: str
-    architecture: str
-    agent_version: str
+    # REQUIRED FIELDS (matching Agents table constraints)
+    hostname: str  # Maps to HostName (NVARCHAR(255) NOT NULL)
+    ip_address: str  # Maps to IPAddress (NVARCHAR(45) NOT NULL) 
+    operating_system: str  # Maps to OperatingSystem (NVARCHAR(100) NOT NULL)
+    os_version: str  # Maps to OSVersion (NVARCHAR(100))
+    architecture: str  # Maps to Architecture (NVARCHAR(20))
+    agent_version: str  # Maps to AgentVersion (NVARCHAR(20) NOT NULL)
     
-    # Network information
-    mac_address: Optional[str] = None
-    domain: Optional[str] = None
+    # OPTIONAL FIELDS (matching database schema)
+    mac_address: Optional[str] = None  # Maps to MACAddress (NVARCHAR(17))
+    domain: Optional[str] = None  # Maps to Domain (NVARCHAR(100))
+    install_path: Optional[str] = None  # Maps to InstallPath (NVARCHAR(500))
     
-    # Installation information
-    install_path: Optional[str] = None
+    # REQUIRED FIELDS with defaults
+    status: str = "Active"  # Maps to Status (NVARCHAR(20) DEFAULT 'Active')
+    cpu_usage: float = 0.0  # Maps to CPUUsage (DECIMAL(5,2) DEFAULT 0.0)
+    memory_usage: float = 0.0  # Maps to MemoryUsage (DECIMAL(5,2) DEFAULT 0.0)
+    disk_usage: float = 0.0  # Maps to DiskUsage (DECIMAL(5,2) DEFAULT 0.0)
+    network_latency: int = 0  # Maps to NetworkLatency (INT DEFAULT 0)
+    monitoring_enabled: bool = True  # Maps to MonitoringEnabled (BIT DEFAULT 1)
     
-    # Linux-specific information
+    # Linux-specific information (stored in metadata or separate fields)
     kernel_version: Optional[str] = None
     distribution: Optional[str] = None
     distribution_version: Optional[str] = None
@@ -453,24 +62,14 @@ class AgentRegistrationData:
     # Agent capabilities
     capabilities: Optional[List[str]] = field(default_factory=list)
     
-    # Status information
-    status: str = "Active"
-    cpu_usage: float = 0.0
-    memory_usage: float = 0.0
-    disk_usage: float = 0.0
-    network_latency: int = 0
-    
-    # Monitoring settings
-    monitoring_enabled: bool = True
-    
-    # Timestamps
+    # Timestamps (will be set by database)
     registration_time: datetime = field(default_factory=datetime.now)
     
     # Additional metadata
     metadata: Optional[Dict[str, Any]] = field(default_factory=dict)
     
     def __post_init__(self):
-        """Post-initialization to populate Linux-specific data"""
+        """Post-initialization to populate Linux-specific data and ensure database compatibility"""
         try:
             # Ensure metadata exists
             if not self.metadata:
@@ -479,17 +78,12 @@ class AgentRegistrationData:
             # Add platform identifier
             self.metadata['platform'] = 'linux'
             
+            # Validate and normalize required fields for database constraints
+            self._validate_and_normalize_fields()
+            
             # Get Linux distribution info if not provided
             if not self.distribution:
-                try:
-                    with open('/etc/os-release', 'r') as f:
-                        for line in f:
-                            if line.startswith('NAME='):
-                                self.distribution = line.split('=')[1].strip().strip('"')
-                            elif line.startswith('VERSION='):
-                                self.distribution_version = line.split('=')[1].strip().strip('"')
-                except:
-                    pass
+                self._detect_linux_distribution()
             
             # Get kernel version if not provided
             if not self.kernel_version:
@@ -500,20 +94,11 @@ class AgentRegistrationData:
             
             # Get current user info
             if not self.current_user:
-                try:
-                    import pwd
-                    self.current_user = pwd.getpwuid(os.getuid()).pw_name
-                    self.effective_user = pwd.getpwuid(os.geteuid()).pw_name
-                except:
-                    pass
+                self._get_user_info()
             
             # Get user groups
             if not self.user_groups:
-                try:
-                    import grp
-                    self.user_groups = [grp.getgrgid(gid).gr_name for gid in os.getgroups()]
-                except:
-                    self.user_groups = []
+                self._get_user_groups()
             
             # Check security modules
             if self.selinux_enabled is None:
@@ -556,6 +141,139 @@ class AgentRegistrationData:
             if not self.metadata:
                 self.metadata = {'error': str(e), 'platform': 'linux'}
     
+    def _validate_and_normalize_fields(self):
+        """Validate and normalize fields for database constraints"""
+        try:
+            # Validate hostname length (max 255 chars)
+            if len(self.hostname) > 255:
+                self.hostname = self.hostname[:255]
+            
+            # Validate IP address format
+            if not self._is_valid_ip(self.ip_address):
+                # Try to get a valid IP
+                self.ip_address = self._get_fallback_ip()
+            
+            # Validate operating system length (max 100 chars)
+            if len(self.operating_system) > 100:
+                self.operating_system = self.operating_system[:100]
+            
+            # Validate OS version length (max 100 chars)
+            if self.os_version and len(self.os_version) > 100:
+                self.os_version = self.os_version[:100]
+            
+            # Validate architecture length (max 20 chars)
+            if len(self.architecture) > 20:
+                self.architecture = self.architecture[:20]
+            
+            # Validate agent version length (max 20 chars)
+            if len(self.agent_version) > 20:
+                self.agent_version = self.agent_version[:20]
+            
+            # Validate MAC address format and length (max 17 chars)
+            if self.mac_address:
+                if len(self.mac_address) > 17:
+                    self.mac_address = self.mac_address[:17]
+                if not self._is_valid_mac(self.mac_address):
+                    self.mac_address = None
+            
+            # Validate domain length (max 100 chars)
+            if self.domain and len(self.domain) > 100:
+                self.domain = self.domain[:100]
+            
+            # Validate install path length (max 500 chars)
+            if self.install_path and len(self.install_path) > 500:
+                self.install_path = self.install_path[:500]
+            
+            # Validate status
+            valid_statuses = ['Active', 'Inactive', 'Error', 'Updating', 'Offline']
+            if self.status not in valid_statuses:
+                self.status = 'Active'
+            
+            # Validate CPU usage (0-100)
+            self.cpu_usage = max(0.0, min(100.0, self.cpu_usage))
+            
+            # Validate memory usage (0-100)
+            self.memory_usage = max(0.0, min(100.0, self.memory_usage))
+            
+            # Validate disk usage (0-100)
+            self.disk_usage = max(0.0, min(100.0, self.disk_usage))
+            
+            # Validate network latency (>= 0)
+            self.network_latency = max(0, self.network_latency)
+            
+        except Exception as e:
+            # Set safe defaults if validation fails
+            if not hasattr(self, 'hostname') or not self.hostname:
+                self.hostname = 'unknown-linux-host'
+            if not hasattr(self, 'ip_address') or not self.ip_address:
+                self.ip_address = '127.0.0.1'
+    
+    def _is_valid_ip(self, ip: str) -> bool:
+        """Validate IP address format"""
+        try:
+            parts = ip.split('.')
+            if len(parts) != 4:
+                return False
+            for part in parts:
+                if not 0 <= int(part) <= 255:
+                    return False
+            return True
+        except:
+            return False
+    
+    def _is_valid_mac(self, mac: str) -> bool:
+        """Validate MAC address format"""
+        try:
+            import re
+            pattern = r'^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
+            
+            return bool(re.match(pattern, mac))
+        except:
+            return False
+    
+    def _get_fallback_ip(self) -> str:
+        """Get fallback IP address"""
+        try:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except:
+            return '127.0.0.1'
+    
+    def _detect_linux_distribution(self):
+        """Detect Linux distribution"""
+        try:
+            with open('/etc/os-release', 'r') as f:
+                for line in f:
+                    if line.startswith('NAME='):
+                        self.distribution = line.split('=')[1].strip().strip('"')
+                    elif line.startswith('VERSION='):
+                        self.distribution_version = line.split('=')[1].strip().strip('"')
+        except:
+            self.distribution = 'Unknown Linux'
+            self.distribution_version = 'Unknown'
+    
+    def _get_user_info(self):
+        """Get current user information"""
+        try:
+            import pwd
+            self.current_user = pwd.getpwuid(os.getuid()).pw_name
+            self.effective_user = pwd.getpwuid(os.geteuid()).pw_name
+        except:
+            self.current_user = 'unknown'
+            self.effective_user = 'unknown'
+    
+    def _get_user_groups(self):
+        """Get user groups"""
+        try:
+            import grp
+            self.user_groups = [grp.getgrgid(gid).gr_name for gid in os.getgroups()]
+        except:
+            self.user_groups = []
+    
     def _detect_desktop_environment(self) -> str:
         """Detect Linux desktop environment"""
         try:
@@ -585,23 +303,6 @@ class AgentRegistrationData:
                         return 'LXDE'
                     else:
                         return value.upper()
-            
-            # Check for specific processes
-            try:
-                import subprocess
-                result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
-                processes = result.stdout.lower()
-                
-                if 'gnome-session' in processes:
-                    return 'GNOME'
-                elif 'kded' in processes or 'plasma' in processes:
-                    return 'KDE'
-                elif 'xfce4-session' in processes:
-                    return 'XFCE'
-                elif 'mate-session' in processes:
-                    return 'MATE'
-            except:
-                pass
             
             # Check for X11 or Wayland
             if os.environ.get('WAYLAND_DISPLAY'):
@@ -666,65 +367,101 @@ class AgentRegistrationData:
         return capabilities
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization"""
+        """Convert to dictionary for database insertion (matching Agents table schema)"""
         try:
-            data = {}
-            for field_name, field_value in self.__dict__.items():
-                if field_value is not None:
-                    if isinstance(field_value, datetime):
-                        data[field_name] = field_value.isoformat()
-                    elif isinstance(field_value, (list, dict)):
-                        data[field_name] = field_value
-                    else:
-                        data[field_name] = field_value
-            return data
+            # Create dictionary with exact database field names
+            data = {
+                # REQUIRED fields
+                'HostName': self.hostname,
+                'IPAddress': self.ip_address,
+                'OperatingSystem': self.operating_system,
+                'OSVersion': self.os_version,
+                'Architecture': self.architecture,
+                'AgentVersion': self.agent_version,
+                
+                # OPTIONAL fields
+                'MACAddress': self.mac_address,
+                'Domain': self.domain,
+                'InstallPath': self.install_path,
+                
+                # STATUS and METRICS fields
+                'Status': self.status,
+                'CPUUsage': self.cpu_usage,
+                'MemoryUsage': self.memory_usage,
+                'DiskUsage': self.disk_usage,
+                'NetworkLatency': self.network_latency,
+                'MonitoringEnabled': self.monitoring_enabled,
+                
+                # TIMESTAMPS (database will set CreatedAt and UpdatedAt)
+                'LastHeartbeat': datetime.now(),
+                'FirstSeen': self.registration_time,
+                
+                # METADATA as JSON string for any additional data
+                'Metadata': json.dumps(self.metadata, default=str) if self.metadata else None
+            }
+            
+            # Remove None values for optional fields
+            return {k: v for k, v in data.items() if v is not None}
+            
         except Exception as e:
-            return {'error': str(e), 'hostname': self.hostname}
+            return {
+                'error': str(e), 
+                'HostName': self.hostname or 'unknown',
+                'IPAddress': self.ip_address or '127.0.0.1',
+                'OperatingSystem': self.operating_system or 'Linux Unknown',
+                'AgentVersion': self.agent_version or '2.1.0-Linux',
+                'Status': 'Active'
+            }
 
 @dataclass
 class AgentHeartbeatData:
-    """Linux Agent Heartbeat Data"""
+    """
+    Linux Agent Heartbeat Data - FIXED TO MATCH DATABASE EXPECTATIONS
+    Used for regular status updates to server
+    """
     
-    # Basic information
+    # Basic information (not sent, used for identification)
     agent_id: Optional[str] = None
     hostname: Optional[str] = None
-    status: str = "Active"
+    
+    # STATUS and PERFORMANCE METRICS (matching Agents table update fields)
+    status: str = "Active"  # Maps to Status
+    cpu_usage: float = 0.0  # Maps to CPUUsage
+    memory_usage: float = 0.0  # Maps to MemoryUsage
+    disk_usage: float = 0.0  # Maps to DiskUsage
+    network_latency: int = 0  # Maps to NetworkLatency
+    
+    # TIMESTAMP
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     
-    # Performance metrics
-    cpu_usage: float = 0.0
-    memory_usage: float = 0.0
-    disk_usage: float = 0.0
-    network_latency: int = 0
-    
-    # System uptime
+    # SYSTEM UPTIME
     uptime: Optional[float] = None
     agent_uptime: Optional[float] = None
     
-    # Collector status
+    # COLLECTOR STATUS
     collector_status: Optional[Dict[str, str]] = field(default_factory=dict)
     
-    # Event statistics
+    # EVENT STATISTICS
     events_collected: int = 0
     events_sent: int = 0
     events_failed: int = 0
     alerts_received: int = 0
     
-    # Linux-specific metrics
+    # LINUX-SPECIFIC METRICS
     load_average: Optional[List[float]] = field(default_factory=list)
     memory_details: Optional[Dict[str, int]] = field(default_factory=dict)
     disk_details: Optional[Dict[str, Any]] = field(default_factory=dict)
     network_details: Optional[Dict[str, Any]] = field(default_factory=dict)
     
-    # Process information
+    # PROCESS INFORMATION
     active_processes: int = 0
     agent_process_id: Optional[int] = None
     
-    # Security status
+    # SECURITY STATUS
     security_status: str = "Normal"
     threat_level: str = "Low"
     
-    # Additional metadata
+    # ADDITIONAL METADATA
     metadata: Optional[Dict[str, Any]] = field(default_factory=dict)
     
     def __post_init__(self):
@@ -737,81 +474,42 @@ class AgentHeartbeatData:
             # Add platform identifier
             self.metadata['platform'] = 'linux'
             
-            # Get system uptime
+            # Validate status
+            valid_statuses = ['Active', 'Inactive', 'Error', 'Updating', 'Offline']
+            if self.status not in valid_statuses:
+                self.status = 'Active'
+            
+            # Validate metrics ranges
+            self.cpu_usage = max(0.0, min(100.0, self.cpu_usage))
+            self.memory_usage = max(0.0, min(100.0, self.memory_usage))
+            self.disk_usage = max(0.0, min(100.0, self.disk_usage))
+            self.network_latency = max(0, self.network_latency)
+            
+            # Get system uptime if not provided
             if self.uptime is None:
-                try:
-                    import psutil
-                    import time
-                    self.uptime = time.time() - psutil.boot_time()
-                except:
-                    try:
-                        with open('/proc/uptime', 'r') as f:
-                            self.uptime = float(f.read().split()[0])
-                    except:
-                        pass
+                self._get_system_uptime()
             
-            # Get load average
+            # Get load average if not provided
             if not self.load_average:
-                try:
-                    self.load_average = list(os.getloadavg())
-                except:
-                    pass
+                self._get_load_average()
             
-            # Get memory details
+            # Get memory details if not provided
             if not self.memory_details:
-                try:
-                    import psutil
-                    memory = psutil.virtual_memory()
-                    self.memory_details = {
-                        'total': memory.total,
-                        'available': memory.available,
-                        'used': memory.used,
-                        'free': memory.free,
-                        'buffers': getattr(memory, 'buffers', 0),
-                        'cached': getattr(memory, 'cached', 0)
-                    }
-                except:
-                    pass
+                self._get_memory_details()
             
-            # Get disk details
+            # Get disk details if not provided
             if not self.disk_details:
-                try:
-                    import psutil
-                    disk = psutil.disk_usage('/')
-                    self.disk_details = {
-                        'total': disk.total,
-                        'used': disk.used,
-                        'free': disk.free
-                    }
-                except:
-                    pass
+                self._get_disk_details()
             
-            # Get network details
+            # Get network details if not provided
             if not self.network_details:
-                try:
-                    import psutil
-                    net_io = psutil.net_io_counters()
-                    self.network_details = {
-                        'bytes_sent': net_io.bytes_sent,
-                        'bytes_recv': net_io.bytes_recv,
-                        'packets_sent': net_io.packets_sent,
-                        'packets_recv': net_io.packets_recv
-                    }
-                except:
-                    pass
+                self._get_network_details()
             
-            # Get process count
+            # Get process count if not provided
             if self.active_processes == 0:
-                try:
-                    import psutil
-                    self.active_processes = len(psutil.pids())
-                except:
-                    try:
-                        self.active_processes = len(os.listdir('/proc'))
-                    except:
-                        pass
+                self._get_process_count()
             
-            # Get agent process ID
+            # Get agent process ID if not provided
             if self.agent_process_id is None:
                 self.agent_process_id = os.getpid()
             
@@ -836,114 +534,261 @@ class AgentHeartbeatData:
             if not self.metadata:
                 self.metadata = {'error': str(e), 'platform': 'linux'}
     
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization"""
+    def _get_system_uptime(self):
+        """Get system uptime"""
         try:
-            data = {}
-            for field_name, field_value in self.__dict__.items():
-                if field_value is not None:
-                    if isinstance(field_value, (list, dict)):
-                        data[field_name] = field_value
-                    else:
-                        data[field_name] = field_value
-            return data
+            import psutil
+            import time
+            self.uptime = time.time() - psutil.boot_time()
+        except:
+            try:
+                with open('/proc/uptime', 'r') as f:
+                    self.uptime = float(f.read().split()[0])
+            except:
+                pass
+    
+    def _get_load_average(self):
+        """Get load average"""
+        try:
+            self.load_average = list(os.getloadavg())
+        except:
+            pass
+    
+    def _get_memory_details(self):
+        """Get memory details"""
+        try:
+            import psutil
+            memory = psutil.virtual_memory()
+            self.memory_details = {
+                'total': memory.total,
+                'available': memory.available,
+                'used': memory.used,
+                'free': memory.free,
+                'buffers': getattr(memory, 'buffers', 0),
+                'cached': getattr(memory, 'cached', 0)
+            }
+        except:
+            pass
+    
+    def _get_disk_details(self):
+        """Get disk details"""
+        try:
+            import psutil
+            disk = psutil.disk_usage('/')
+            self.disk_details = {
+                'total': disk.total,
+                'used': disk.used,
+                'free': disk.free
+            }
+        except:
+            pass
+    
+    def _get_network_details(self):
+        """Get network details"""
+        try:
+            import psutil
+            net_io = psutil.net_io_counters()
+            self.network_details = {
+                'bytes_sent': net_io.bytes_sent,
+                'bytes_recv': net_io.bytes_recv,
+                'packets_sent': net_io.packets_sent,
+                'packets_recv': net_io.packets_recv
+            }
+        except:
+            pass
+    
+    def _get_process_count(self):
+        """Get process count"""
+        try:
+            import psutil
+            self.active_processes = len(psutil.pids())
+        except:
+            try:
+                self.active_processes = len(os.listdir('/proc'))
+            except:
+                pass
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for heartbeat API (matching server expectations)"""
+        try:
+            # Create dictionary with database-compatible field names
+            data = {
+                # STATUS and METRICS for Agents table update
+                'Status': self.status,
+                'CPUUsage': self.cpu_usage,
+                'MemoryUsage': self.memory_usage,
+                'DiskUsage': self.disk_usage,
+                'NetworkLatency': self.network_latency,
+                
+                # ADDITIONAL LINUX METRICS
+                'Platform': 'linux',
+                'Uptime': self.uptime,
+                'LoadAverage': self.load_average,
+                'MemoryDetails': self.memory_details,
+                'DiskDetails': self.disk_details,
+                'NetworkDetails': self.network_details,
+                'ActiveProcesses': self.active_processes,
+                'CollectorStatus': self.collector_status,
+                'EventsCollected': self.events_collected,
+                'EventsSent': self.events_sent,
+                'EventsFailed': self.events_failed,
+                'AlertsReceived': self.alerts_received,
+                'SecurityStatus': self.security_status,
+                'ThreatLevel': self.threat_level,
+                'AgentProcessID': self.agent_process_id,
+                'Timestamp': self.timestamp,
+                'Metadata': self.metadata
+            }
+            
+            # Remove None values
+            return {k: v for k, v in data.items() if v is not None}
+            
         except Exception as e:
-            return {'error': str(e), 'agent_id': self.agent_id}
+            return {
+                'error': str(e), 
+                'Status': self.status,
+                'Platform': 'linux',
+                'Timestamp': self.timestamp
+            }
 
-@dataclass
-class AgentStatusData:
-    """Linux Agent Status Data"""
-    
-    # Basic status
-    agent_id: str
-    hostname: str
-    status: str = "Unknown"
-    last_seen: datetime = field(default_factory=datetime.now)
-    
-    # Health information
-    is_healthy: bool = True
-    health_issues: Optional[List[str]] = field(default_factory=list)
-    
-    # Performance metrics
-    cpu_usage: float = 0.0
-    memory_usage: float = 0.0
-    disk_usage: float = 0.0
-    
-    # Monitoring status
-    is_monitoring: bool = False
-    collectors_running: int = 0
-    collectors_total: int = 0
-    
-    # Event processing
-    events_per_minute: float = 0.0
-    queue_utilization: float = 0.0
-    processing_errors: int = 0
-    
-    # Security status
-    threats_detected: int = 0
-    alerts_generated: int = 0
-    last_threat_time: Optional[datetime] = None
-    
-    # Linux-specific status
-    kernel_version: Optional[str] = None
-    distribution: Optional[str] = None
-    has_root_privileges: bool = False
-    
-    # Additional information
-    metadata: Optional[Dict[str, Any]] = field(default_factory=dict)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization"""
-        try:
-            data = {}
-            for field_name, field_value in self.__dict__.items():
-                if field_value is not None:
-                    if isinstance(field_value, datetime):
-                        data[field_name] = field_value.isoformat()
-                    elif isinstance(field_value, (list, dict)):
-                        data[field_name] = field_value
-                    else:
-                        data[field_name] = field_value
-            return data
-        except Exception as e:
-            return {'error': str(e), 'agent_id': self.agent_id}
+# Utility functions for agent data handling
+def create_linux_registration_data(hostname: str, ip_address: str, **kwargs) -> AgentRegistrationData:
+    """Create Linux agent registration data with defaults"""
+    try:
+        # Get system information
+        os_info = f"Linux {platform.system()} {platform.release()}"
+        
+        return AgentRegistrationData(
+            hostname=hostname,
+            ip_address=ip_address,
+            operating_system=os_info,
+            os_version=platform.release(),
+            architecture=platform.machine(),
+            agent_version="2.1.0-Linux",
+            **kwargs
+        )
+    except Exception as e:
+        # Return minimal data on error
+        return AgentRegistrationData(
+            hostname=hostname or "unknown",
+            ip_address=ip_address or "127.0.0.1",
+            operating_system="Linux Unknown",
+            os_version="Unknown",
+            architecture="Unknown",
+            agent_version="2.1.0-Linux"
+        )
 
-@dataclass
-class AgentEventData:
-    """Linux Agent Event Data"""
-    
-    # Event identification
-    event_id: str
-    agent_id: str
-    event_type: str
-    timestamp: datetime = field(default_factory=datetime.now)
-    
-    # Event details
-    severity: str = "Info"
-    source: str = "Agent"
-    category: str = "System"
-    
-    # Event data
-    data: Optional[Dict[str, Any]] = field(default_factory=dict)
-    metadata: Optional[Dict[str, Any]] = field(default_factory=dict)
-    
-    # Processing information
-    processed: bool = False
-    sent_to_server: bool = False
-    retry_count: int = 0
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization"""
+def create_linux_heartbeat_data(agent_id: str = None, **kwargs) -> AgentHeartbeatData:
+    """Create Linux agent heartbeat data with system metrics"""
+    try:
+        # Get current system metrics
+        cpu_usage = 0.0
+        memory_usage = 0.0
+        disk_usage = 0.0
+        
         try:
-            data = {}
-            for field_name, field_value in self.__dict__.items():
-                if field_value is not None:
-                    if isinstance(field_value, datetime):
-                        data[field_name] = field_value.isoformat()
-                    elif isinstance(field_value, (list, dict)):
-                        data[field_name] = field_value
-                    else:
-                        data[field_name] = field_value
-            return data
-        except Exception as e:
-            return {'error': str(e), 'event_id': self.event_id}
+            import psutil
+            cpu_usage = psutil.cpu_percent(interval=1)
+            memory = psutil.virtual_memory()
+            memory_usage = memory.percent
+            disk = psutil.disk_usage('/')
+            disk_usage = disk.percent
+        except ImportError:
+            pass
+        
+        return AgentHeartbeatData(
+            agent_id=agent_id,
+            cpu_usage=cpu_usage,
+            memory_usage=memory_usage,
+            disk_usage=disk_usage,
+            **kwargs
+        )
+    except Exception as e:
+        # Return minimal heartbeat on error
+        return AgentHeartbeatData(
+            agent_id=agent_id,
+            status="Error",
+            metadata={'error': str(e)}
+        )
+
+def validate_agent_registration_data(data: AgentRegistrationData) -> tuple[bool, str]:
+    """Validate agent registration data for database compatibility"""
+    try:
+        # Check required fields
+        if not data.hostname:
+            return False, "Missing hostname"
+        
+        if not data.ip_address:
+            return False, "Missing IP address"
+        
+        if not data.operating_system:
+            return False, "Missing operating system"
+        
+        if not data.agent_version:
+            return False, "Missing agent version"
+        
+        # Validate field lengths for database constraints
+        if len(data.hostname) > 255:
+            return False, "Hostname too long (max 255 chars)"
+        
+        if len(data.ip_address) > 45:
+            return False, "IP address too long (max 45 chars)"
+        
+        if len(data.operating_system) > 100:
+            return False, "Operating system too long (max 100 chars)"
+        
+        if data.os_version and len(data.os_version) > 100:
+            return False, "OS version too long (max 100 chars)"
+        
+        if len(data.architecture) > 20:
+            return False, "Architecture too long (max 20 chars)"
+        
+        if len(data.agent_version) > 20:
+            return False, "Agent version too long (max 20 chars)"
+        
+        if data.mac_address and len(data.mac_address) > 17:
+            return False, "MAC address too long (max 17 chars)"
+        
+        if data.domain and len(data.domain) > 100:
+            return False, "Domain too long (max 100 chars)"
+        
+        if data.install_path and len(data.install_path) > 500:
+            return False, "Install path too long (max 500 chars)"
+        
+        # Validate IP address format
+        try:
+            parts = data.ip_address.split('.')
+            if len(parts) != 4:
+                return False, "Invalid IP address format"
+            for part in parts:
+                if not 0 <= int(part) <= 255:
+                    return False, "Invalid IP address range"
+        except:
+            return False, "Invalid IP address"
+        
+        # Validate status
+        valid_statuses = ['Active', 'Inactive', 'Error', 'Updating', 'Offline']
+        if data.status not in valid_statuses:
+            return False, f"Invalid status. Must be one of: {valid_statuses}"
+        
+        # Validate usage percentages
+        if not (0 <= data.cpu_usage <= 100):
+            return False, "CPU usage must be between 0 and 100"
+        
+        if not (0 <= data.memory_usage <= 100):
+            return False, "Memory usage must be between 0 and 100"
+        
+        if not (0 <= data.disk_usage <= 100):
+            return False, "Disk usage must be between 0 and 100"
+        
+        # Validate network latency
+        if data.network_latency < 0:
+            return False, "Network latency cannot be negative"
+        
+        return True, "Valid"
+        
+    except Exception as e:
+        return False, f"Validation error: {e}"
+
+# Import json for metadata serialization
+import json

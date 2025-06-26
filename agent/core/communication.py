@@ -1,7 +1,7 @@
-# agent/core/communication.py - Linux Communication
+# agent/core/communication.py - FIXED Linux Communication
 """
-Linux Server Communication - Optimized for Linux platform
-Handle communication with EDR server with Linux-specific features
+Linux Server Communication - FIXED TO MATCH DATABASE SCHEMA
+Handle communication with EDR server with proper payload format
 """
 
 import aiohttp
@@ -20,7 +20,7 @@ from agent.schemas.agent_data import AgentRegistrationData, AgentHeartbeatData
 from agent.schemas.events import EventData
 
 class LinuxServerCommunication:
-    """Linux Server Communication with platform-specific optimizations"""
+    """Linux Server Communication - FIXED FOR DATABASE COMPATIBILITY"""
     
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
@@ -71,7 +71,7 @@ class LinuxServerCommunication:
         self.alerts_received_from_server = 0
         self.last_threat_detection = None
         
-        self.logger.info("🐧 Linux Communication initialized - Enhanced for Linux platform")
+        self.logger.info("🐧 Linux Communication initialized - FIXED for database compatibility")
     
     async def initialize(self):
         """Initialize Linux communication with server detection"""
@@ -284,7 +284,9 @@ class LinuxServerCommunication:
             return False
     
     async def submit_event(self, event_data: EventData) -> tuple[bool, Optional[Dict], Optional[str]]:
-        """Submit event to server - Linux optimized"""
+        """
+        FIXED: Submit event to server with database-compatible payload
+        """
         try:
             # Test connection before sending
             if not await self.test_connection():
@@ -297,8 +299,8 @@ class LinuxServerCommunication:
             if not self.working_server:
                 return False, None, "No working server"
             
-            # Convert event to payload
-            payload = self._convert_event_to_payload(event_data)
+            # FIXED: Convert event to database-compatible payload
+            payload = self._convert_event_to_database_payload(event_data)
             
             if payload is None:
                 return False, None, "Event payload conversion failed - missing agent_id"
@@ -321,14 +323,106 @@ class LinuxServerCommunication:
         except Exception as e:
             return False, None, str(e)
     
-    def _process_server_response(self, response: Dict[str, Any], original_event: EventData) -> Dict[str, Any]:
+    def _convert_event_to_database_payload(self, event_data: EventData) -> Optional[Dict]:
+        """
+        FIXED: Convert event data to database-compatible API payload
+        Maps EventData fields to database schema exactly
+        """
+        try:
+            # Validate agent_id is present
+            if not event_data.agent_id:
+                self.logger.error(f"❌ CRITICAL: Linux event missing agent_id - Type: {event_data.event_type}, Action: {event_data.event_action}")
+                return None
+            
+            # FIXED: Create payload matching database schema exactly
+            payload = {
+                # REQUIRED FIELDS (matching Events table)
+                'AgentID': event_data.agent_id,
+                'EventType': event_data.event_type,  # Process, File, Network, Registry, Authentication, System
+                'EventAction': event_data.event_action,  # String value, not enum
+                'EventTimestamp': event_data.event_timestamp.isoformat(),
+                'Severity': event_data.severity,  # Info, Low, Medium, High, Critical
+                
+                # Process fields (optional)
+                'ProcessID': event_data.process_id,
+                'ProcessName': event_data.process_name,
+                'ProcessPath': event_data.process_path,
+                'CommandLine': event_data.command_line,
+                'ParentPID': event_data.parent_pid,
+                'ParentProcessName': event_data.parent_process_name,
+                'ProcessUser': event_data.process_user,
+                'ProcessHash': event_data.process_hash,
+                
+                # File fields (optional)
+                'FilePath': event_data.file_path,
+                'FileName': event_data.file_name,
+                'FileSize': event_data.file_size,
+                'FileHash': event_data.file_hash,
+                'FileExtension': event_data.file_extension,
+                'FileOperation': event_data.file_operation,
+                
+                # Network fields (optional)
+                'SourceIP': event_data.source_ip,
+                'DestinationIP': event_data.destination_ip,
+                'SourcePort': event_data.source_port,
+                'DestinationPort': event_data.destination_port,
+                'Protocol': event_data.protocol,
+                'Direction': event_data.direction,
+                
+                # Registry fields (optional, for compatibility)
+                'RegistryKey': event_data.registry_key,
+                'RegistryValueName': event_data.registry_value_name,
+                'RegistryValueData': event_data.registry_value_data,
+                'RegistryOperation': event_data.registry_operation,
+                
+                # Authentication fields (optional)
+                'LoginUser': event_data.login_user,
+                'LoginType': event_data.login_type,
+                'LoginResult': event_data.login_result,
+                
+                # Detection status fields
+                'ThreatLevel': event_data.threat_level,  # None, Suspicious, Malicious
+                'RiskScore': event_data.risk_score,  # 0-100
+                'Analyzed': event_data.analyzed,
+                'AnalyzedAt': event_data.analyzed_at.isoformat() if event_data.analyzed_at else None,
+                
+                # Raw event data (JSON string)
+                'RawEventData': event_data.raw_event_data
+            }
+            
+            # Remove None values to match database requirements
+            cleaned_payload = {}
+            for key, value in payload.items():
+                if value is not None:
+                    cleaned_payload[key] = value
+            
+            # Ensure we have minimum required fields
+            required_fields = ['AgentID', 'EventType', 'EventAction', 'EventTimestamp', 'Severity']
+            for field in required_fields:
+                if field not in cleaned_payload:
+                    self.logger.error(f"❌ Missing required field in payload: {field}")
+                    return None
+            
+            self.logger.debug(f"📦 LINUX DATABASE PAYLOAD CREATED:")
+            self.logger.debug(f"   🎯 Type: {cleaned_payload.get('EventType')}")
+            self.logger.debug(f"   🔧 Action: {cleaned_payload.get('EventAction')}")
+            self.logger.debug(f"   📊 Severity: {cleaned_payload.get('Severity')}")
+            self.logger.debug(f"   🆔 Agent ID: {cleaned_payload.get('AgentID')}")
+            
+            return cleaned_payload
+            
+        except Exception as e:
+            self.logger.error(f"❌ Linux event payload conversion failed: {e}")
+            return None
+    
+    def _process_server_response(self, server_response: Dict[str, Any], original_event: EventData) -> Dict[str, Any]:
         """Process server response for threat detection - Linux specific"""
         try:
-            if not response:
+            if not server_response:
                 return {'success': False, 'threat_detected': False, 'risk_score': 0}
             
             # Initialize processed response
-            processed_response = response.copy()
+            processed_response = server_response.copy()
             
             # Ensure required fields
             if 'threat_detected' not in processed_response:
@@ -337,11 +431,11 @@ class LinuxServerCommunication:
                 processed_response['risk_score'] = 0
             
             # CASE 1: Server detected threat
-            if response.get('threat_detected', False):
+            if server_response.get('threat_detected', False):
                 self.threats_detected_by_server += 1
                 self.last_threat_detection = datetime.now()
                 
-                self.logger.warning(f"🚨 LINUX SERVER DETECTED THREAT: {original_event.event_type} - Risk: {response.get('risk_score', 0)}")
+                self.logger.warning(f"🚨 LINUX SERVER DETECTED THREAT: {original_event.event_type} - Risk: {server_response.get('risk_score', 0)}")
                 
                 # Ensure complete threat information
                 if 'rule_triggered' not in processed_response:
@@ -352,8 +446,8 @@ class LinuxServerCommunication:
                 return processed_response
             
             # CASE 2: Server generated alerts
-            if 'alerts_generated' in response and response['alerts_generated']:
-                alerts = response['alerts_generated']
+            if 'alerts_generated' in server_response and server_response['alerts_generated']:
+                alerts = server_response['alerts_generated']
                 self.alerts_received_from_server += len(alerts)
                 self.last_threat_detection = datetime.now()
                 
@@ -367,7 +461,7 @@ class LinuxServerCommunication:
                 return processed_response
             
             # CASE 3: High risk score
-            risk_score = response.get('risk_score', 0)
+            risk_score = server_response.get('risk_score', 0)
             if risk_score >= 70:
                 self.threats_detected_by_server += 1
                 self.last_threat_detection = datetime.now()
@@ -393,108 +487,6 @@ class LinuxServerCommunication:
                 'threat_detected': False,
                 'risk_score': 0,
                 'error': str(e)
-            }
-    
-    def _convert_event_to_payload(self, event_data: EventData) -> Dict:
-        """Convert event data to API payload - Linux optimized"""
-        try:
-            # Validate agent_id is present
-            if not event_data.agent_id:
-                self.logger.error(f"❌ CRITICAL: Linux event missing agent_id - Type: {event_data.event_type}, Action: {event_data.event_action}")
-                return None
-            
-            # Normalize severity
-            severity_mapping = {
-                'INFO': 'Info', 'LOW': 'Low', 'MEDIUM': 'Medium',
-                'HIGH': 'High', 'CRITICAL': 'Critical',
-                'Info': 'Info', 'Low': 'Low', 'Medium': 'Medium', 
-                'High': 'High', 'Critical': 'Critical'
-            }
-            normalized_severity = severity_mapping.get(event_data.severity, 'Info')
-            
-            # Normalize event_type
-            event_type_mapping = {
-                'Process': 'Process', 'File': 'File', 'Network': 'Network',
-                'Registry': 'Registry', 'Authentication': 'Authentication', 'System': 'System'
-            }
-            normalized_event_type = event_type_mapping.get(event_data.event_type, 'System')
-            
-            payload = {
-                # Core event fields
-                'agent_id': event_data.agent_id,
-                'event_type': normalized_event_type,
-                'event_action': event_data.event_action,
-                'event_timestamp': event_data.event_timestamp.isoformat(),
-                'severity': normalized_severity,
-                
-                # Process fields
-                'process_id': event_data.process_id,
-                'process_name': event_data.process_name,
-                'process_path': event_data.process_path,
-                'command_line': event_data.command_line,
-                'parent_pid': event_data.parent_pid,
-                'parent_process_name': event_data.parent_process_name,
-                'process_user': event_data.process_user,
-                'process_hash': event_data.process_hash,
-                
-                # File fields
-                'file_path': event_data.file_path,
-                'file_name': event_data.file_name,
-                'file_size': event_data.file_size,
-                'file_hash': event_data.file_hash,
-                'file_extension': event_data.file_extension,
-                'file_operation': event_data.file_operation,
-                
-                # Network fields
-                'source_ip': event_data.source_ip,
-                'destination_ip': event_data.destination_ip,
-                'source_port': event_data.source_port,
-                'destination_port': event_data.destination_port,
-                'protocol': event_data.protocol,
-                'direction': event_data.direction,
-                
-                # Registry fields (if applicable)
-                'registry_key': event_data.registry_key,
-                'registry_value_name': event_data.registry_value_name,
-                'registry_value_data': event_data.registry_value_data,
-                'registry_operation': event_data.registry_operation,
-                
-                # Authentication fields
-                'login_user': event_data.login_user,
-                'login_type': event_data.login_type,
-                'login_result': event_data.login_result,
-                
-                # Raw event data with Linux platform info
-                'raw_event_data': event_data.raw_event_data or {}
-            }
-            
-            # Add Linux platform identifier
-            if 'raw_event_data' in payload:
-                payload['raw_event_data']['platform'] = 'linux'
-            
-            # Remove None values
-            cleaned_payload = {}
-            for key, value in payload.items():
-                if value is not None:
-                    cleaned_payload[key] = value
-            
-            self.logger.debug(f"📦 LINUX EVENT PAYLOAD CREATED:")
-            self.logger.debug(f"   🎯 Type: {cleaned_payload.get('event_type')}")
-            self.logger.debug(f"   🔧 Action: {cleaned_payload.get('event_action')}")
-            self.logger.debug(f"   📊 Severity: {cleaned_payload.get('severity')}")
-            self.logger.debug(f"   🆔 Agent ID: {cleaned_payload.get('agent_id')}")
-            
-            return cleaned_payload
-            
-        except Exception as e:
-            self.logger.error(f"❌ Linux event payload conversion failed: {e}")
-            return {
-                'agent_id': event_data.agent_id or 'unknown',
-                'event_type': event_data.event_type or 'System',
-                'event_action': event_data.event_action or 'Unknown',
-                'event_timestamp': datetime.now().isoformat(),
-                'severity': 'Info',
-                'raw_event_data': {'platform': 'linux'}
             }
     
     async def _make_request_with_retry(self, method: str, url: str, payload: Optional[Dict] = None) -> Optional[Dict]:
@@ -612,7 +604,7 @@ class LinuxServerCommunication:
             return None
     
     async def register_agent(self, registration_data: AgentRegistrationData) -> Optional[Dict]:
-        """Register Linux agent with EDR server"""
+        """Register Linux agent with EDR server - FIXED for database"""
         try:
             if not self.working_server:
                 self.logger.warning("⚠️ No server available for Linux agent registration")
@@ -620,24 +612,39 @@ class LinuxServerCommunication:
             
             url = f"{self.base_url}/api/v1/agents/register"
             
-            # Create Linux-specific registration payload
+            # FIXED: Create registration payload matching database schema
             registration_payload = {
-                'hostname': registration_data.hostname,
-                'ip_address': registration_data.ip_address,
-                'mac_address': registration_data.mac_address,
-                'operating_system': registration_data.operating_system,
-                'os_version': registration_data.os_version,
-                'architecture': registration_data.architecture,
-                'domain': registration_data.domain,
-                'agent_version': '2.1.0-Linux',
-                'install_path': registration_data.install_path,
-                'status': 'Active',
-                'cpu_usage': 0.0,
-                'memory_usage': 0.0,
-                'disk_usage': 0.0,
-                'network_latency': 0,
-                'monitoring_enabled': True,
-                'platform': 'linux'
+                # REQUIRED fields matching Agents table
+                'HostName': registration_data.hostname,
+                'IPAddress': registration_data.ip_address,
+                'OperatingSystem': registration_data.operating_system,
+                'OSVersion': registration_data.os_version or platform.release(),
+                'Architecture': registration_data.architecture or platform.machine(),
+                'AgentVersion': '2.1.0-Linux',
+                
+                # OPTIONAL fields
+                'MACAddress': registration_data.mac_address,
+                'Domain': registration_data.domain,
+                'InstallPath': registration_data.install_path,
+                
+                # Default values for required fields
+                'Status': 'Active',
+                'CPUUsage': 0.0,
+                'MemoryUsage': 0.0,
+                'DiskUsage': 0.0,
+                'NetworkLatency': 0,
+                'MonitoringEnabled': True,
+                
+                # Linux-specific metadata
+                'Platform': 'linux',
+                'KernelVersion': registration_data.kernel_version,
+                'Distribution': registration_data.distribution,
+                'DistributionVersion': registration_data.distribution_version,
+                'HasRootPrivileges': registration_data.has_root_privileges,
+                'CurrentUser': registration_data.current_user,
+                'EffectiveUser': registration_data.effective_user,
+                'UserGroups': registration_data.user_groups,
+                'Capabilities': registration_data.capabilities
             }
             
             response = await self._make_request_with_retry('POST', url, registration_payload)
@@ -654,7 +661,7 @@ class LinuxServerCommunication:
             return None
     
     async def send_heartbeat(self, heartbeat_data: AgentHeartbeatData) -> Optional[Dict]:
-        """Send Linux agent heartbeat to server"""
+        """Send Linux agent heartbeat to server - FIXED for database"""
         try:
             if self.offline_mode:
                 return {
@@ -666,14 +673,27 @@ class LinuxServerCommunication:
             
             url = f"{self.base_url}/api/v1/agents/heartbeat"
             
+            # FIXED: Create heartbeat payload matching database expectations
             payload = {
-                'hostname': heartbeat_data.hostname,
-                'status': heartbeat_data.status,
-                'cpu_usage': heartbeat_data.cpu_usage,
-                'memory_usage': heartbeat_data.memory_usage,
-                'disk_usage': heartbeat_data.disk_usage,
-                'network_latency': heartbeat_data.network_latency,
-                'platform': 'linux'
+                'Status': heartbeat_data.status,
+                'CPUUsage': heartbeat_data.cpu_usage,
+                'MemoryUsage': heartbeat_data.memory_usage,
+                'DiskUsage': heartbeat_data.disk_usage,
+                'NetworkLatency': heartbeat_data.network_latency,
+                'Platform': 'linux',
+                'Uptime': heartbeat_data.uptime,
+                'LoadAverage': heartbeat_data.load_average,
+                'MemoryDetails': heartbeat_data.memory_details,
+                'DiskDetails': heartbeat_data.disk_details,
+                'NetworkDetails': heartbeat_data.network_details,
+                'ActiveProcesses': heartbeat_data.active_processes,
+                'CollectorStatus': heartbeat_data.collector_status,
+                'EventsCollected': heartbeat_data.events_collected,
+                'EventsSent': heartbeat_data.events_sent,
+                'EventsFailed': heartbeat_data.events_failed,
+                'AlertsReceived': heartbeat_data.alerts_received,
+                'SecurityStatus': heartbeat_data.security_status,
+                'ThreatLevel': heartbeat_data.threat_level
             }
             
             response = await self._make_request_with_retry('POST', url, payload)
@@ -722,7 +742,8 @@ class LinuxServerCommunication:
             'alerts_received_from_server': self.alerts_received_from_server,
             'last_threat_detection': self.last_threat_detection.isoformat() if self.last_threat_detection else None,
             'platform': 'linux',
-            'linux_optimized': True
+            'database_compatible': True,
+            'fixed_payload_format': True
         }
     
     def is_connected(self) -> bool:
