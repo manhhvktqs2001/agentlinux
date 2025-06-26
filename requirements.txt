@@ -1,0 +1,320 @@
+# Linux EDR Agent Requirements
+# Core dependencies for Linux EDR agent functionality
+
+# Core Python packages
+psutil>=5.9.0
+asyncio-mqtt>=0.11.0
+aiohttp>=3.8.0
+requests>=2.28.0
+pyyaml>=6.0
+cryptography>=3.4.8
+pycryptodome>=3.15.0
+
+# System monitoring
+psutil>=5.9.0
+py-cpuinfo>=8.0.0
+
+# Network monitoring
+scapy>=2.4.5
+netifaces>=0.11.0
+
+# File system monitoring
+watchdog>=2.1.9
+inotify-simple>=1.3.5
+
+# Process monitoring
+psutil>=5.9.0
+
+# Container monitoring
+docker>=6.0.0
+
+# Authentication monitoring
+python-ldap>=3.4.0
+
+# Logging and monitoring
+structlog>=22.1.0
+colorlog>=6.7.0
+
+# Configuration management
+configparser>=5.2.0
+python-dotenv>=0.19.0
+
+# Data serialization
+msgpack>=1.0.4
+orjson>=3.8.0
+
+# Security and encryption
+cryptography>=3.4.8
+pycryptodome>=3.15.0
+bcrypt>=4.0.1
+
+# System utilities
+shutil-which>=1.0.0
+pathlib2>=2.3.7
+
+# Async utilities
+aiofiles>=22.1.0
+asyncio-throttle>=1.0.2
+
+# HTTP client
+httpx>=0.23.0
+urllib3>=1.26.12
+
+# JSON handling
+ujson>=5.7.0
+
+# Date and time
+python-dateutil>=2.8.2
+pytz>=2022.1
+
+# System information
+platform-utils>=0.1.0
+
+# Process tree analysis
+psutil>=5.9.0
+
+# Memory analysis
+psutil>=5.9.0
+
+# Disk I/O monitoring
+psutil>=5.9.0
+
+# Network I/O monitoring
+psutil>=5.9.0
+
+# System load monitoring
+psutil>=5.9.0
+
+# Service management
+systemd-python>=234
+
+# Audit log monitoring
+audit-python>=1.0.0
+
+# Syslog monitoring
+syslog-ng>=3.0.0
+
+# Performance monitoring
+psutil>=5.9.0
+
+# Security scanning
+clamav-python>=0.4.0
+
+# Threat intelligence
+requests>=2.28.0
+
+# Machine learning (optional)
+numpy>=1.21.0
+scikit-learn>=1.1.0
+
+# Data analysis (optional)
+pandas>=1.4.0
+
+# Visualization (optional)
+matplotlib>=3.5.0
+seaborn>=0.11.0
+
+# Testing
+pytest>=7.0.0
+pytest-asyncio>=0.20.0
+pytest-cov>=3.0.0
+
+# Development tools
+black>=22.0.0
+flake8>=4.0.0
+mypy>=0.950
+
+# Documentation
+sphinx>=5.0.0
+sphinx-rtd-theme>=1.0.0
+
+# Build tools
+setuptools>=60.0.0
+wheel>=0.37.0
+
+# Optional: GUI support (if needed)
+# tkinter (usually included with Python)
+# PyQt5>=5.15.0
+
+# Optional: Database support (if needed)
+# sqlite3 (usually included with Python)
+# psycopg2-binary>=2.9.0  # PostgreSQL
+# pymongo>=4.0.0  # MongoDB
+
+# Optional: Cloud integration (if needed)
+# boto3>=1.24.0  # AWS
+# google-cloud-storage>=2.0.0  # Google Cloud
+# azure-storage-blob>=12.0.0  # Azure
+
+# Optional: Message queues (if needed)
+# pika>=1.2.0  # RabbitMQ
+# redis>=4.0.0  # Redis
+# kafka-python>=2.0.0  # Kafka
+
+# Optional: Monitoring and metrics (if needed)
+# prometheus-client>=0.14.0
+# statsd>=3.3.0
+
+# Optional: Web framework (if needed for local API)
+# fastapi>=0.78.0
+# uvicorn>=0.17.0
+
+# Optional: GraphQL (if needed)
+# graphene>=3.0.0
+
+# Optional: API documentation (if needed)
+# pydantic>=1.9.0
+
+# Optional: Background tasks (if needed)
+# celery>=5.2.0
+
+# Optional: Caching (if needed)
+# cachetools>=5.0.0
+
+# Optional: Rate limiting (if needed)
+# slowapi>=0.1.0
+
+# Optional: Health checks (if needed)
+# healthcheck>=1.3.0
+
+# Optional: Circuit breaker (if needed)
+# pybreaker>=1.0.0
+
+# Optional: Retry logic (if needed)
+# tenacity>=8.0.0
+
+# Optional: Validation (if needed)
+# cerberus>=1.3.0
+
+# Optional: Schema validation (if needed)
+# jsonschema>=4.0.0
+
+# Optional: Data validation (if needed)
+# marshmallow>=3.17.0
+
+# Optional: Serialization (if needed)
+# marshmallow>=3.17.0
+
+# Optional: API versioning (if needed)
+# apispec>=5.0.0
+
+# Optional: OpenAPI (if needed)
+# apispec>=5.0.0
+
+# Optional: GraphQL (if needed)
+# graphene>=3.0.0
+
+# Optional: WebSocket (if needed)
+# websockets>=10.0
+
+# Optional: Server-Sent Events (if needed)
+# sse-starlette>=1.0.0
+
+# Optional: File upload (if needed)
+# python-multipart>=0.0.5
+
+# Optional: Image processing (if needed)
+# Pillow>=9.0.0
+
+# Optional: PDF processing (if needed)
+# PyPDF2>=2.0.0
+
+# Optional: Excel processing (if needed)
+# openpyxl>=3.0.0
+
+# Optional: CSV processing (if needed)
+# pandas>=1.4.0
+
+# Optional: XML processing (if needed)
+# lxml>=4.9.0
+
+# Optional: YAML processing (if needed)
+# PyYAML>=6.0
+
+# Optional: TOML processing (if needed)
+# tomli>=2.0.0
+
+# Optional: INI processing (if needed)
+# configparser>=5.2.0
+
+# Optional: Environment variables (if needed)
+# python-dotenv>=0.19.0
+
+# Optional: Command line arguments (if needed)
+# click>=8.0.0
+
+# Optional: Progress bars (if needed)
+# tqdm>=4.64.0
+
+# Optional: Rich terminal output (if needed)
+# rich>=12.0.0
+
+# Optional: Colorama (if needed)
+# colorama>=0.4.4
+
+# Optional: Tabulate (if needed)
+# tabulate>=0.8.9
+
+# Optional: Pretty print (if needed)
+# pprint>=0.1
+
+# Optional: Debugging (if needed)
+# ipdb>=0.13.0
+
+# Optional: Profiling (if needed)
+# cProfile (usually included with Python)
+# line_profiler>=3.5.0
+
+# Optional: Memory profiling (if needed)
+# memory_profiler>=0.60.0
+
+# Optional: Performance monitoring (if needed)
+# py-spy>=0.3.0
+
+# Optional: System monitoring (if needed)
+# psutil>=5.9.0
+
+# Optional: Network monitoring (if needed)
+# scapy>=2.4.5
+
+# Optional: Process monitoring (if needed)
+# psutil>=5.9.0
+
+# Optional: File monitoring (if needed)
+# watchdog>=2.1.9
+
+# Optional: Container monitoring (if needed)
+# docker>=6.0.0
+
+# Optional: Authentication monitoring (if needed)
+# python-ldap>=3.4.0
+
+# Optional: Log monitoring (if needed)
+# structlog>=22.1.0
+
+# Optional: Security monitoring (if needed)
+# cryptography>=3.4.8
+
+# Optional: Threat intelligence (if needed)
+# requests>=2.28.0
+
+# Optional: Machine learning (if needed)
+# numpy>=1.21.0
+
+# Optional: Data analysis (if needed)
+# pandas>=1.4.0
+
+# Optional: Visualization (if needed)
+# matplotlib>=3.5.0
+
+# Optional: Testing (if needed)
+# pytest>=7.0.0
+
+# Optional: Development tools (if needed)
+# black>=22.0.0
+
+# Optional: Documentation (if needed)
+# sphinx>=5.0.0
+
+# Optional: Build tools (if needed)
+# setuptools>=60.0.0
