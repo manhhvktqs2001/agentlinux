@@ -1,7 +1,7 @@
-# agent/collectors/container_collector.py - Linux Container Collector
+# agent/collectors/container_security_collector.py - ENHANCED Container Security
 """
-Linux Container Collector - Monitor Docker and Podman containers
-Enhanced security monitoring for containerized environments
+Enhanced Container Security Collector - Comprehensive container monitoring
+Monitor Docker, Podman, Kubernetes with advanced security detection
 """
 
 import asyncio
@@ -10,6 +10,8 @@ import time
 import json
 import subprocess
 import os
+import docker
+import kubernetes
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
@@ -18,651 +20,520 @@ from agent.collectors.base_collector import BaseCollector
 from agent.schemas.events import EventData, EventType, EventSeverity
 
 @dataclass
-class ContainerInfo:
-    """Container information structure"""
-    id: str
-    name: str
+class ContainerSecurityEvent:
+    """Container security event data"""
+    container_id: str
+    container_name: str
     image: str
-    status: str
-    created: str
-    ports: List[str]
-    mounts: List[str]
-    networks: List[str]
-    command: str
-    user: str
-    privileged: bool
-    security_opts: List[str]
-    capabilities: List[str]
-    pid: Optional[int] = None
-    memory_usage: Optional[int] = None
-    cpu_usage: Optional[float] = None
-    network_usage: Optional[Dict[str, int]] = None
+    security_issue: str
+    severity: str
+    details: Dict[str, Any]
+    timestamp: datetime
 
-class LinuxContainerCollector(BaseCollector):
-    """Linux Container Collector - Monitor Docker and Podman containers"""
+class EnhancedContainerSecurityCollector(BaseCollector):
+    """Enhanced Container Security Collector with advanced monitoring"""
     
     def __init__(self, config_manager):
-        super().__init__(config_manager, "container")
+        super().__init__(config_manager, "container_security")
         self.logger = logging.getLogger(__name__)
         
         # Container runtime detection
         self.docker_available = False
         self.podman_available = False
-        self.container_runtime = None
-        
-        # Container tracking
-        self.known_containers = {}
-        self.container_events = []
+        self.k8s_available = False
         
         # Security monitoring
-        self.security_events = []
-        self.privileged_containers = []
-        self.suspicious_containers = []
+        self.privileged_containers = set()
+        self.suspicious_containers = set()
+        self.container_escapes = []
+        self.vulnerable_images = set()
         
-        # Performance tracking
-        self.stats_collection_enabled = True
-        self.last_stats_collection = 0
+        # Kubernetes monitoring
+        self.k8s_client = None
+        self.monitored_namespaces = ['default', 'kube-system']
         
         # Configuration
-        self.monitor_docker = True
-        self.monitor_podman = True
-        self.collect_stats = True
-        self.security_scanning = True
+        self.monitor_container_creation = True
+        self.monitor_privileged_containers = True
+        self.monitor_container_escapes = True
+        self.monitor_image_vulnerabilities = True
+        self.monitor_kubernetes_events = True
         
+        # Security rules
+        self.dangerous_capabilities = [
+            'SYS_ADMIN', 'SYS_MODULE', 'SYS_RAWIO', 'SYS_PTRACE',
+            'SYS_BOOT', 'SYS_TIME', 'NET_ADMIN', 'DAC_OVERRIDE'
+        ]
+        
+        self.suspicious_mounts = [
+            '/proc', '/sys', '/dev', '/run', '/boot', '/etc/passwd',
+            '/etc/shadow', '/var/run/docker.sock'
+        ]
+    
     async def initialize(self):
-        """Initialize container collector"""
+        """Initialize enhanced container security collector"""
         try:
-            self.logger.info("🐳 Initializing Linux Container Collector...")
+            self.logger.info("🐳 Initializing Enhanced Container Security Collector...")
             
             # Detect container runtimes
             await self._detect_container_runtimes()
             
-            if not self.docker_available and not self.podman_available:
-                self.logger.warning("⚠️ No container runtime detected (Docker/Podman)")
-                return
+            # Initialize Docker client
+            if self.docker_available:
+                await self._initialize_docker_monitoring()
             
-            # Initialize container tracking
-            await self._initialize_container_tracking()
+            # Initialize Kubernetes monitoring
+            if self.k8s_available:
+                await self._initialize_kubernetes_monitoring()
             
-            # Setup security monitoring
-            if self.security_scanning:
-                await self._setup_security_monitoring()
+            # Start security monitoring
+            await self._start_security_monitoring()
             
-            self.logger.info(f"✅ Container Collector initialized - Runtime: {self.container_runtime}")
+            self.logger.info("✅ Enhanced Container Security Collector initialized")
             
         except Exception as e:
-            self.logger.error(f"❌ Container Collector initialization failed: {e}")
+            self.logger.error(f"❌ Container Security Collector initialization failed: {e}")
             raise
     
     async def _detect_container_runtimes(self):
-        """Detect available container runtimes"""
+        """Detect available container runtimes and orchestrators"""
         try:
             # Check Docker
             try:
-                result = subprocess.run(
-                    ['docker', '--version'], 
-                    capture_output=True, 
-                    text=True, 
-                    timeout=5
-                )
-                if result.returncode == 0:
-                    self.docker_available = True
-                    self.container_runtime = 'docker'
-                    self.logger.info(f"🐳 Docker detected: {result.stdout.strip()}")
+                docker_client = docker.from_env()
+                docker_client.ping()
+                self.docker_available = True
+                self.logger.info("🐳 Docker runtime detected")
             except:
-                pass
+                self.logger.info("ℹ️ Docker not available")
             
             # Check Podman
             try:
-                result = subprocess.run(
-                    ['podman', '--version'], 
-                    capture_output=True, 
-                    text=True, 
-                    timeout=5
-                )
+                result = subprocess.run(['podman', '--version'], 
+                                      capture_output=True, timeout=5)
                 if result.returncode == 0:
                     self.podman_available = True
-                    if not self.docker_available:
-                        self.container_runtime = 'podman'
-                    self.logger.info(f"📦 Podman detected: {result.stdout.strip()}")
+                    self.logger.info("📦 Podman runtime detected")
             except:
-                pass
+                self.logger.info("ℹ️ Podman not available")
+            
+            # Check Kubernetes
+            try:
+                kubernetes.config.load_incluster_config()  # Try in-cluster first
+                self.k8s_available = True
+                self.logger.info("☸️ Kubernetes cluster detected (in-cluster)")
+            except:
+                try:
+                    kubernetes.config.load_kube_config()  # Try local kubeconfig
+                    self.k8s_available = True
+                    self.logger.info("☸️ Kubernetes cluster detected (local config)")
+                except:
+                    self.logger.info("ℹ️ Kubernetes not available")
             
         except Exception as e:
             self.logger.error(f"❌ Container runtime detection failed: {e}")
     
-    async def _initialize_container_tracking(self):
-        """Initialize container tracking"""
+    async def _initialize_docker_monitoring(self):
+        """Initialize Docker security monitoring"""
         try:
-            # Get initial container list
-            containers = await self._get_all_containers()
+            self.docker_client = docker.from_env()
             
+            # Monitor existing containers
+            containers = self.docker_client.containers.list(all=True)
             for container in containers:
-                self.known_containers[container.id] = {
-                    'info': container,
-                    'first_seen': datetime.now(),
-                    'last_seen': datetime.now(),
-                    'status_history': [container.status],
-                    'security_events': []
-                }
+                await self._analyze_container_security(container)
             
-            self.logger.info(f"📊 Tracking {len(self.known_containers)} containers")
+            # Setup event monitoring
+            asyncio.create_task(self._monitor_docker_events())
             
         except Exception as e:
-            self.logger.error(f"❌ Container tracking initialization failed: {e}")
+            self.logger.error(f"❌ Docker monitoring initialization failed: {e}")
     
-    async def _setup_security_monitoring(self):
-        """Setup security monitoring for containers"""
+    async def _initialize_kubernetes_monitoring(self):
+        """Initialize Kubernetes security monitoring"""
         try:
-            # Check for privileged containers
-            privileged_containers = await self._find_privileged_containers()
+            self.k8s_v1 = kubernetes.client.CoreV1Api()
+            self.k8s_apps = kubernetes.client.AppsV1Api()
             
-            for container in privileged_containers:
-                await self._report_security_event(
-                    container_id=container.id,
-                    event_type="privileged_container_detected",
-                    severity=EventSeverity.HIGH,
-                    details={
-                        'container_name': container.name,
-                        'privileged': container.privileged,
-                        'security_opts': container.security_opts,
-                        'capabilities': container.capabilities
-                    }
-                )
+            # Monitor existing pods
+            for namespace in self.monitored_namespaces:
+                try:
+                    pods = self.k8s_v1.list_namespaced_pod(namespace)
+                    for pod in pods.items:
+                        await self._analyze_pod_security(pod)
+                except Exception as e:
+                    self.logger.debug(f"Could not list pods in namespace {namespace}: {e}")
             
-            # Check for suspicious containers
-            suspicious_containers = await self._find_suspicious_containers()
-            
-            for container in suspicious_containers:
-                await self._report_security_event(
-                    container_id=container.id,
-                    event_type="suspicious_container_detected",
-                    severity=EventSeverity.MEDIUM,
-                    details={
-                        'container_name': container.name,
-                        'suspicious_factors': container.security_opts
-                    }
-                )
+            # Setup event monitoring
+            asyncio.create_task(self._monitor_kubernetes_events())
             
         except Exception as e:
-            self.logger.error(f"❌ Security monitoring setup failed: {e}")
+            self.logger.error(f"❌ Kubernetes monitoring initialization failed: {e}")
+    
+    async def _start_security_monitoring(self):
+        """Start continuous security monitoring tasks"""
+        try:
+            # Monitor for container escapes
+            if self.monitor_container_escapes:
+                asyncio.create_task(self._monitor_container_escapes())
+            
+            # Monitor for privilege escalation
+            asyncio.create_task(self._monitor_privilege_escalation())
+            
+            # Monitor for suspicious network activity
+            asyncio.create_task(self._monitor_container_network_activity())
+            
+            # Image vulnerability scanning
+            if self.monitor_image_vulnerabilities:
+                asyncio.create_task(self._scan_image_vulnerabilities())
+            
+        except Exception as e:
+            self.logger.error(f"❌ Security monitoring startup failed: {e}")
     
     async def collect_data(self):
-        """Collect container data"""
+        """Collect container security data"""
         try:
             if not self.is_running:
                 return
             
-            # Get current containers
-            current_containers = await self._get_all_containers()
-            current_container_ids = {c.id for c in current_containers}
+            # Check for new security events
+            await self._check_security_events()
             
-            # Check for new containers
-            for container in current_containers:
-                if container.id not in self.known_containers:
-                    await self._handle_new_container(container)
-                else:
-                    await self._update_container_info(container)
+            # Monitor runtime security
+            await self._monitor_runtime_security()
             
-            # Check for stopped/removed containers
-            known_ids = set(self.known_containers.keys())
-            removed_ids = known_ids - current_container_ids
-            
-            for container_id in removed_ids:
-                await self._handle_removed_container(container_id)
-            
-            # Collect performance stats
-            if self.collect_stats and time.time() - self.last_stats_collection > 30:
-                await self._collect_container_stats()
-                self.last_stats_collection = time.time()
-            
-            # Security scanning
-            if self.security_scanning:
-                await self._perform_security_scan()
+            # Check for policy violations
+            await self._check_policy_violations()
             
         except Exception as e:
-            self.logger.error(f"❌ Container data collection failed: {e}")
+            self.logger.error(f"❌ Container security data collection failed: {e}")
     
-    async def _get_all_containers(self) -> List[ContainerInfo]:
-        """Get all running and stopped containers"""
-        containers = []
-        
+    async def _monitor_docker_events(self):
+        """Monitor Docker events for security issues"""
         try:
-            if self.docker_available:
-                docker_containers = await self._get_docker_containers()
-                containers.extend(docker_containers)
-            
-            if self.podman_available:
-                podman_containers = await self._get_podman_containers()
-                containers.extend(podman_containers)
-            
+            while self.is_running:
+                try:
+                    for event in self.docker_client.events(decode=True):
+                        if event['Type'] == 'container':
+                            await self._handle_docker_event(event)
+                except Exception as e:
+                    self.logger.error(f"Docker event monitoring error: {e}")
+                    await asyncio.sleep(5)
         except Exception as e:
-            self.logger.error(f"❌ Failed to get containers: {e}")
-        
-        return containers
+            self.logger.error(f"❌ Docker event monitoring failed: {e}")
     
-    async def _get_docker_containers(self) -> List[ContainerInfo]:
-        """Get Docker containers"""
-        containers = []
-        
+    async def _handle_docker_event(self, event: Dict):
+        """Handle Docker container events"""
         try:
-            # Get container list
-            result = subprocess.run(
-                ['docker', 'ps', '-a', '--format', 'json'],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
+            action = event.get('Action', '')
+            container_id = event.get('id', '')
             
-            if result.returncode == 0:
-                for line in result.stdout.strip().split('\n'):
-                    if line.strip():
-                        try:
-                            data = json.loads(line)
-                            container = self._parse_docker_container(data)
-                            if container:
-                                containers.append(container)
-                        except json.JSONDecodeError:
-                            continue
-            
-        except Exception as e:
-            self.logger.error(f"❌ Docker container listing failed: {e}")
-        
-        return containers
-    
-    async def _get_podman_containers(self) -> List[ContainerInfo]:
-        """Get Podman containers"""
-        containers = []
-        
-        try:
-            # Get container list
-            result = subprocess.run(
-                ['podman', 'ps', '-a', '--format', 'json'],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            
-            if result.returncode == 0:
-                for line in result.stdout.strip().split('\n'):
-                    if line.strip():
-                        try:
-                            data = json.loads(line)
-                            container = self._parse_podman_container(data)
-                            if container:
-                                containers.append(container)
-                        except json.JSONDecodeError:
-                            continue
-            
-        except Exception as e:
-            self.logger.error(f"❌ Podman container listing failed: {e}")
-        
-        return containers
-    
-    def _parse_docker_container(self, data: Dict) -> Optional[ContainerInfo]:
-        """Parse Docker container data"""
-        try:
-            return ContainerInfo(
-                id=data.get('ID', ''),
-                name=data.get('Names', ''),
-                image=data.get('Image', ''),
-                status=data.get('Status', ''),
-                created=data.get('CreatedAt', ''),
-                ports=data.get('Ports', '').split(',') if data.get('Ports') else [],
-                mounts=data.get('Mounts', '').split(',') if data.get('Mounts') else [],
-                networks=data.get('Networks', '').split(',') if data.get('Networks') else [],
-                command=data.get('Command', ''),
-                user=data.get('User', ''),
-                privileged=data.get('Privileged', 'false').lower() == 'true',
-                security_opts=data.get('SecurityOpts', '').split(',') if data.get('SecurityOpts') else [],
-                capabilities=data.get('Capabilities', '').split(',') if data.get('Capabilities') else []
-            )
-        except Exception as e:
-            self.logger.debug(f"Failed to parse Docker container: {e}")
-            return None
-    
-    def _parse_podman_container(self, data: Dict) -> Optional[ContainerInfo]:
-        """Parse Podman container data"""
-        try:
-            return ContainerInfo(
-                id=data.get('Id', ''),
-                name=data.get('Names', ''),
-                image=data.get('Image', ''),
-                status=data.get('Status', ''),
-                created=data.get('Created', ''),
-                ports=data.get('Ports', []),
-                mounts=data.get('Mounts', []),
-                networks=data.get('Networks', []),
-                command=data.get('Command', ''),
-                user=data.get('User', ''),
-                privileged=data.get('Privileged', False),
-                security_opts=data.get('SecurityOpts', []),
-                capabilities=data.get('Capabilities', [])
-            )
-        except Exception as e:
-            self.logger.debug(f"Failed to parse Podman container: {e}")
-            return None
-    
-    async def _handle_new_container(self, container: ContainerInfo):
-        """Handle new container detection"""
-        try:
-            self.logger.info(f"🆕 New container detected: {container.name} ({container.id[:12]})")
-            
-            # Add to tracking
-            self.known_containers[container.id] = {
-                'info': container,
-                'first_seen': datetime.now(),
-                'last_seen': datetime.now(),
-                'status_history': [container.status],
-                'security_events': []
-            }
-            
-            # Create event
-            event_data = EventData(
-                event_type=EventType.CONTAINER_CREATED,
-                severity=EventSeverity.INFO,
-                source="container_collector",
-                data={
-                    'container_id': container.id,
-                    'container_name': container.name,
-                    'image': container.image,
-                    'status': container.status,
-                    'runtime': self.container_runtime,
-                    'privileged': container.privileged,
-                    'security_opts': container.security_opts,
-                    'capabilities': container.capabilities
-                }
-            )
-            
-            await self._send_event(event_data)
-            
-            # Security check
-            if container.privileged:
-                await self._report_security_event(
-                    container_id=container.id,
-                    event_type="new_privileged_container",
-                    severity=EventSeverity.HIGH,
-                    details={'container_name': container.name}
-                )
-            
-        except Exception as e:
-            self.logger.error(f"❌ New container handling failed: {e}")
-    
-    async def _update_container_info(self, container: ContainerInfo):
-        """Update existing container information"""
-        try:
-            if container.id in self.known_containers:
-                tracking_info = self.known_containers[container.id]
-                old_status = tracking_info['info'].status
+            if action == 'start':
+                # New container started - security analysis
+                container = self.docker_client.containers.get(container_id)
+                await self._analyze_container_security(container)
                 
-                # Update tracking info
-                tracking_info['info'] = container
-                tracking_info['last_seen'] = datetime.now()
-                tracking_info['status_history'].append(container.status)
+            elif action in ['exec_create', 'exec_start']:
+                # Command execution in container
+                await self._analyze_container_execution(event)
                 
-                # Check for status change
-                if old_status != container.status:
-                    self.logger.info(f"🔄 Container status changed: {container.name} ({container.id[:12]}) - {old_status} -> {container.status}")
-                    
-                    event_data = EventData(
-                        event_type=EventType.CONTAINER_STATUS_CHANGED,
-                        severity=EventSeverity.INFO,
-                        source="container_collector",
-                        data={
-                            'container_id': container.id,
-                            'container_name': container.name,
-                            'old_status': old_status,
-                            'new_status': container.status,
-                            'runtime': self.container_runtime
-                        }
-                    )
-                    
-                    await self._send_event(event_data)
-        
         except Exception as e:
-            self.logger.error(f"❌ Container info update failed: {e}")
+            self.logger.debug(f"Error handling Docker event: {e}")
     
-    async def _handle_removed_container(self, container_id: str):
-        """Handle container removal"""
+    async def _analyze_container_security(self, container):
+        """Analyze container for security issues"""
         try:
-            if container_id in self.known_containers:
-                container_info = self.known_containers[container_id]
-                container_name = container_info['info'].name
-                
-                self.logger.info(f"🗑️ Container removed: {container_name} ({container_id[:12]})")
-                
-                # Create event
-                event_data = EventData(
-                    event_type=EventType.CONTAINER_REMOVED,
-                    severity=EventSeverity.INFO,
-                    source="container_collector",
-                    data={
-                        'container_id': container_id,
-                        'container_name': container_name,
-                        'runtime': self.container_runtime,
-                        'lifetime_seconds': (datetime.now() - container_info['first_seen']).total_seconds()
-                    }
-                )
-                
-                await self._send_event(event_data)
-                
-                # Remove from tracking
-                del self.known_containers[container_id]
-        
-        except Exception as e:
-            self.logger.error(f"❌ Container removal handling failed: {e}")
-    
-    async def _collect_container_stats(self):
-        """Collect container performance statistics"""
-        try:
-            for container_id, tracking_info in self.known_containers.items():
-                container = tracking_info['info']
-                
-                if container.status == 'running':
-                    stats = await self._get_container_stats(container_id)
-                    if stats:
-                        event_data = EventData(
-                            event_type=EventType.CONTAINER_STATS,
-                            severity=EventSeverity.INFO,
-                            source="container_collector",
-                            data={
-                                'container_id': container_id,
-                                'container_name': container.name,
-                                'stats': stats,
-                                'runtime': self.container_runtime
-                            }
-                        )
-                        
-                        await self._send_event(event_data)
-        
-        except Exception as e:
-            self.logger.error(f"❌ Container stats collection failed: {e}")
-    
-    async def _get_container_stats(self, container_id: str) -> Optional[Dict]:
-        """Get container statistics"""
-        try:
-            if self.docker_available:
-                result = subprocess.run(
-                    ['docker', 'stats', '--no-stream', '--format', 'json', container_id],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                
-                if result.returncode == 0 and result.stdout.strip():
-                    return json.loads(result.stdout.strip())
+            container_info = container.attrs
+            config = container_info.get('Config', {})
+            host_config = container_info.get('HostConfig', {})
             
-            elif self.podman_available:
-                result = subprocess.run(
-                    ['podman', 'stats', '--no-stream', '--format', 'json', container_id],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                
-                if result.returncode == 0 and result.stdout.strip():
-                    return json.loads(result.stdout.strip())
-        
-        except Exception as e:
-            self.logger.debug(f"Failed to get stats for container {container_id}: {e}")
-        
-        return None
-    
-    async def _perform_security_scan(self):
-        """Perform security scanning on containers"""
-        try:
-            for container_id, tracking_info in self.known_containers.items():
-                container = tracking_info['info']
-                
-                # Check for security issues
-                security_issues = await self._check_container_security(container)
-                
-                for issue in security_issues:
-                    await self._report_security_event(
-                        container_id=container_id,
-                        event_type=issue['type'],
-                        severity=issue['severity'],
-                        details=issue['details']
-                    )
-        
-        except Exception as e:
-            self.logger.error(f"❌ Security scanning failed: {e}")
-    
-    async def _check_container_security(self, container: ContainerInfo) -> List[Dict]:
-        """Check container for security issues"""
-        issues = []
-        
-        try:
+            security_issues = []
+            
             # Check for privileged mode
-            if container.privileged:
-                issues.append({
-                    'type': 'privileged_container',
-                    'severity': EventSeverity.HIGH,
-                    'details': {
-                        'container_name': container.name,
-                        'risk': 'Container has full host access'
-                    }
+            if host_config.get('Privileged', False):
+                security_issues.append({
+                    'issue': 'privileged_container',
+                    'severity': 'HIGH',
+                    'description': 'Container running in privileged mode'
                 })
+                self.privileged_containers.add(container.id)
             
-            # Check for dangerous capabilities
-            dangerous_caps = ['SYS_ADMIN', 'SYS_MODULE', 'SYS_RAWIO', 'SYS_PTRACE']
-            for cap in dangerous_caps:
-                if cap in container.capabilities:
-                    issues.append({
-                        'type': 'dangerous_capability',
-                        'severity': EventSeverity.MEDIUM,
-                        'details': {
-                            'container_name': container.name,
-                            'capability': cap,
-                            'risk': f'Container has {cap} capability'
-                        }
+            # Check dangerous capabilities
+            cap_add = host_config.get('CapAdd', [])
+            for cap in self.dangerous_capabilities:
+                if cap in cap_add:
+                    security_issues.append({
+                        'issue': 'dangerous_capability',
+                        'severity': 'MEDIUM',
+                        'description': f'Container has dangerous capability: {cap}'
+                    })
+            
+            # Check suspicious mounts
+            mounts = container_info.get('Mounts', [])
+            for mount in mounts:
+                source = mount.get('Source', '')
+                if any(sus_path in source for sus_path in self.suspicious_mounts):
+                    security_issues.append({
+                        'issue': 'suspicious_mount',
+                        'severity': 'HIGH', 
+                        'description': f'Suspicious host path mounted: {source}'
                     })
             
             # Check for root user
-            if container.user == 'root' or container.user == '0':
-                issues.append({
-                    'type': 'root_container',
-                    'severity': EventSeverity.MEDIUM,
-                    'details': {
-                        'container_name': container.name,
-                        'user': container.user,
-                        'risk': 'Container running as root'
-                    }
+            user = config.get('User', 'root')
+            if user == 'root' or user == '0':
+                security_issues.append({
+                    'issue': 'root_user',
+                    'severity': 'MEDIUM',
+                    'description': 'Container running as root user'
                 })
             
-            # Check for suspicious security options
-            suspicious_opts = ['no-new-privileges:false', 'seccomp:unconfined']
-            for opt in suspicious_opts:
-                if opt in container.security_opts:
-                    issues.append({
-                        'type': 'suspicious_security_opt',
-                        'severity': EventSeverity.MEDIUM,
-                        'details': {
-                            'container_name': container.name,
-                            'option': opt,
-                            'risk': f'Suspicious security option: {opt}'
-                        }
-                    })
-        
-        except Exception as e:
-            self.logger.error(f"❌ Container security check failed: {e}")
-        
-        return issues
-    
-    async def _find_privileged_containers(self) -> List[ContainerInfo]:
-        """Find privileged containers"""
-        privileged = []
-        
-        try:
-            containers = await self._get_all_containers()
+            # Check network mode
+            network_mode = host_config.get('NetworkMode', '')
+            if network_mode == 'host':
+                security_issues.append({
+                    'issue': 'host_network',
+                    'severity': 'HIGH',
+                    'description': 'Container using host network mode'
+                })
             
-            for container in containers:
-                if container.privileged:
-                    privileged.append(container)
-        
-        except Exception as e:
-            self.logger.error(f"❌ Privileged container search failed: {e}")
-        
-        return privileged
-    
-    async def _find_suspicious_containers(self) -> List[ContainerInfo]:
-        """Find suspicious containers"""
-        suspicious = []
-        
-        try:
-            containers = await self._get_all_containers()
+            # Report security issues
+            for issue in security_issues:
+                await self._report_container_security_event(
+                    container_id=container.id,
+                    container_name=container.name,
+                    image=container.image.tags[0] if container.image.tags else 'unknown',
+                    security_issue=issue['issue'],
+                    severity=issue['severity'],
+                    details=issue
+                )
             
-            for container in containers:
-                # Check for suspicious patterns
-                if (container.user == 'root' or 
-                    any(cap in container.capabilities for cap in ['SYS_ADMIN', 'SYS_MODULE']) or
-                    any(opt in container.security_opts for opt in ['no-new-privileges:false', 'seccomp:unconfined'])):
-                    suspicious.append(container)
-        
         except Exception as e:
-            self.logger.error(f"❌ Suspicious container search failed: {e}")
-        
-        return suspicious
+            self.logger.error(f"❌ Container security analysis failed: {e}")
     
-    async def _report_security_event(self, container_id: str, event_type: str, severity: EventSeverity, details: Dict):
-        """Report security event"""
+    async def _monitor_kubernetes_events(self):
+        """Monitor Kubernetes events for security issues"""
+        try:
+            while self.is_running:
+                try:
+                    for namespace in self.monitored_namespaces:
+                        # Monitor pod events
+                        events = self.k8s_v1.list_namespaced_event(namespace)
+                        for event in events.items:
+                            await self._analyze_kubernetes_event(event)
+                    
+                    await asyncio.sleep(10)  # Check every 10 seconds
+                    
+                except Exception as e:
+                    self.logger.error(f"Kubernetes event monitoring error: {e}")
+                    await asyncio.sleep(30)
+        except Exception as e:
+            self.logger.error(f"❌ Kubernetes event monitoring failed: {e}")
+    
+    async def _analyze_kubernetes_event(self, event):
+        """Analyze Kubernetes events for security issues"""
+        try:
+            event_type = event.type
+            reason = event.reason
+            message = event.message
+            
+            # Check for security-related events
+            security_reasons = [
+                'FailedMount', 'FailedCreatePodSandBox', 'SecurityContextDeny',
+                'Unhealthy', 'FailedScheduling', 'FailedCreatePod'
+            ]
+            
+            if reason in security_reasons:
+                await self._report_kubernetes_security_event(event)
+            
+            # Check for privilege escalation attempts
+            if 'privilege' in message.lower() or 'escalat' in message.lower():
+                await self._report_kubernetes_security_event(event, 'privilege_escalation')
+            
+        except Exception as e:
+            self.logger.debug(f"Error analyzing Kubernetes event: {e}")
+    
+    async def _monitor_container_escapes(self):
+        """Monitor for container escape attempts"""
+        try:
+            while self.is_running:
+                try:
+                    # Check for suspicious process activity from containers
+                    containers = self.docker_client.containers.list()
+                    
+                    for container in containers:
+                        # Check if container processes are accessing host resources
+                        top_output = container.top()
+                        if top_output:
+                            processes = top_output.get('Processes', [])
+                            for process in processes:
+                                if len(process) > 7:  # Has command
+                                    command = process[7]
+                                    if self._is_escape_attempt(command):
+                                        await self._report_container_escape(container, command)
+                    
+                    await asyncio.sleep(30)  # Check every 30 seconds
+                    
+                except Exception as e:
+                    self.logger.error(f"Container escape monitoring error: {e}")
+                    await asyncio.sleep(30)
+        except Exception as e:
+            self.logger.error(f"❌ Container escape monitoring failed: {e}")
+    
+    def _is_escape_attempt(self, command: str) -> bool:
+        """Check if command indicates container escape attempt"""
+        escape_indicators = [
+            'docker', 'runc', 'mount', '/proc/1/', '/sys/', 
+            'nsenter', 'unshare', 'chroot', '/dev/mem',
+            'cgroups', '/proc/sys/', 'modprobe'
+        ]
+        
+        command_lower = command.lower()
+        return any(indicator in command_lower for indicator in escape_indicators)
+    
+    async def _monitor_privilege_escalation(self):
+        """Monitor for privilege escalation in containers"""
+        try:
+            while self.is_running:
+                try:
+                    # Monitor setuid/setgid executions
+                    # Monitor sudo/su usage in containers
+                    # Check for capability changes
+                    
+                    await asyncio.sleep(60)  # Check every minute
+                    
+                except Exception as e:
+                    self.logger.error(f"Privilege escalation monitoring error: {e}")
+                    await asyncio.sleep(60)
+        except Exception as e:
+            self.logger.error(f"❌ Privilege escalation monitoring failed: {e}")
+    
+    async def _monitor_container_network_activity(self):
+        """Monitor container network activity for security issues"""
+        try:
+            while self.is_running:
+                try:
+                    # Monitor for suspicious network connections
+                    # Check for data exfiltration patterns
+                    # Monitor for C2 communications
+                    
+                    await asyncio.sleep(60)
+                    
+                except Exception as e:
+                    self.logger.error(f"Container network monitoring error: {e}")
+                    await asyncio.sleep(60)
+        except Exception as e:
+            self.logger.error(f"❌ Container network monitoring failed: {e}")
+    
+    async def _scan_image_vulnerabilities(self):
+        """Scan container images for vulnerabilities"""
+        try:
+            while self.is_running:
+                try:
+                    # Get list of images
+                    images = self.docker_client.images.list()
+                    
+                    for image in images:
+                        # Simple vulnerability check (would integrate with Trivy/Clair in production)
+                        await self._check_image_vulnerabilities(image)
+                    
+                    await asyncio.sleep(3600)  # Scan every hour
+                    
+                except Exception as e:
+                    self.logger.error(f"Image vulnerability scanning error: {e}")
+                    await asyncio.sleep(3600)
+        except Exception as e:
+            self.logger.error(f"❌ Image vulnerability scanning failed: {e}")
+    
+    async def _check_image_vulnerabilities(self, image):
+        """Check image for known vulnerabilities"""
+        try:
+            # This would integrate with vulnerability scanners like Trivy, Clair, etc.
+            # For now, implement basic checks
+            
+            image_tags = image.tags
+            if not image_tags:
+                return
+            
+            image_name = image_tags[0]
+            
+            # Check for outdated base images
+            outdated_images = [
+                'ubuntu:14.04', 'ubuntu:16.04', 'centos:6', 'centos:7',
+                'debian:jessie', 'alpine:3.5', 'node:8', 'python:2.7'
+            ]
+            
+            for outdated in outdated_images:
+                if outdated in image_name:
+                    await self._report_image_vulnerability(image, 'outdated_base_image')
+            
+            # Check for latest tag (bad practice)
+            if ':latest' in image_name or image_name.endswith(':latest'):
+                await self._report_image_vulnerability(image, 'latest_tag_usage')
+            
+        except Exception as e:
+            self.logger.debug(f"Error checking image vulnerabilities: {e}")
+    
+    async def _report_container_security_event(self, container_id: str, container_name: str, 
+                                             image: str, security_issue: str, 
+                                             severity: str, details: Dict):
+        """Report container security event"""
         try:
             event_data = EventData(
                 event_type=EventType.CONTAINER_SECURITY,
                 severity=severity,
-                source="container_collector",
+                source="container_security_collector",
                 data={
                     'container_id': container_id,
-                    'security_event_type': event_type,
+                    'container_name': container_name,
+                    'image': image,
+                    'security_issue': security_issue,
                     'details': details,
-                    'runtime': self.container_runtime
+                    'platform': 'linux',
+                    'runtime': 'docker'
                 }
             )
             
             await self._send_event(event_data)
             
-            # Track in container info
-            if container_id in self.known_containers:
-                self.known_containers[container_id]['security_events'].append({
-                    'timestamp': datetime.now(),
-                    'event_type': event_type,
-                    'severity': severity,
-                    'details': details
-                })
-        
         except Exception as e:
-            self.logger.error(f"❌ Security event reporting failed: {e}")
+            self.logger.error(f"❌ Container security event reporting failed: {e}")
+    
+    async def _report_container_escape(self, container, command: str):
+        """Report container escape attempt"""
+        try:
+            event_data = EventData(
+                event_type=EventType.CONTAINER_SECURITY,
+                severity='CRITICAL',
+                source="container_security_collector",
+                data={
+                    'container_id': container.id,
+                    'container_name': container.name,
+                    'security_issue': 'container_escape_attempt',
+                    'command': command,
+                    'details': {
+                        'description': 'Container escape attempt detected',
+                        'suspicious_command': command,
+                        'risk_level': 'critical'
+                    }
+                }
+            )
+            
+            await self._send_event(event_data)
+            
+        except Exception as e:
+            self.logger.error(f"❌ Container escape reporting failed: {e}")
     
     def get_status(self) -> Dict[str, Any]:
-        """Get collector status"""
+        """Get container security collector status"""
         return {
-            'collector_type': 'container',
+            'collector_type': 'container_security',
             'is_running': self.is_running,
-            'container_runtime': self.container_runtime,
             'docker_available': self.docker_available,
             'podman_available': self.podman_available,
-            'containers_tracked': len(self.known_containers),
-            'security_events': len(self.security_events),
+            'k8s_available': self.k8s_available,
             'privileged_containers': len(self.privileged_containers),
-            'suspicious_containers': len(self.suspicious_containers)
+            'suspicious_containers': len(self.suspicious_containers),
+            'container_escapes': len(self.container_escapes),
+            'vulnerable_images': len(self.vulnerable_images)
         }
