@@ -462,3 +462,275 @@ class LinuxAgentManager:
             
             # Try to read from /etc/domain
             if os.path.exists('/etc/domain'):
+                with open('/etc/domain', 'r') as f:
+                    domain = f.read().strip()
+                    if domain:
+                        return domain
+            
+            # Try to get from resolv.conf
+            if os.path.exists('/etc/resolv.conf'):
+                with open('/etc/resolv.conf', 'r') as f:
+                    for line in f:
+                        if line.startswith('domain '):
+                            return line.split()[1].strip()
+            
+            return None
+        except Exception as e:
+            self.logger.debug(f"Could not get domain: {e}")
+            return None
+    
+    def _load_agent_id(self) -> Optional[str]:
+        """Load agent ID from file"""
+        try:
+            if os.path.exists(self.agent_id_file):
+                with open(self.agent_id_file, 'r') as f:
+                    agent_id = f.read().strip()
+                    if agent_id:
+                        return agent_id
+        except Exception as e:
+            self.logger.debug(f"Could not load agent ID: {e}")
+        return None
+    
+    def _save_agent_id(self, agent_id: str):
+        """Save agent ID to file"""
+        try:
+            os.makedirs(os.path.dirname(self.agent_id_file), exist_ok=True)
+            with open(self.agent_id_file, 'w') as f:
+                f.write(agent_id)
+        except Exception as e:
+            self.logger.error(f"Could not save agent ID: {e}")
+    
+    async def _start_collectors(self):
+        """Start all Linux collectors"""
+        try:
+            self.logger.info("🚀 Starting Linux collectors...")
+            
+            for name, collector in self.collectors.items():
+                try:
+                    if hasattr(collector, 'start'):
+                        await collector.start()
+                        self.logger.info(f"✅ {name} collector started")
+                    else:
+                        self.logger.warning(f"⚠️ {name} collector has no start method")
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to start {name} collector: {e}")
+            
+            self.logger.info(f"🎉 {len(self.collectors)} Linux collectors started")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Linux collector start failed: {e}")
+            raise
+    
+    async def _stop_collectors(self):
+        """Stop all Linux collectors"""
+        try:
+            self.logger.info("🛑 Stopping Linux collectors...")
+            
+            for name, collector in self.collectors.items():
+                try:
+                    if hasattr(collector, 'stop'):
+                        await collector.stop()
+                        self.logger.info(f"✅ {name} collector stopped")
+                    else:
+                        self.logger.warning(f"⚠️ {name} collector has no stop method")
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to stop {name} collector: {e}")
+            
+            self.logger.info("✅ All Linux collectors stopped")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Linux collector stop failed: {e}")
+    
+    async def _heartbeat_loop(self):
+        """Send periodic heartbeats to server"""
+        try:
+            while self.is_running:
+                try:
+                    if self.is_registered and self.communication:
+                        await self._send_heartbeat()
+                    
+                    # Get heartbeat interval from config
+                    interval = self.config.get('agent', {}).get('heartbeat_interval', 30)
+                    await asyncio.sleep(interval)
+                    
+                except Exception as e:
+                    self.logger.error(f"❌ Heartbeat error: {e}")
+                    await asyncio.sleep(10)  # Wait before retry
+                    
+        except asyncio.CancelledError:
+            self.logger.info("🛑 Heartbeat loop cancelled")
+        except Exception as e:
+            self.logger.error(f"❌ Heartbeat loop failed: {e}")
+    
+    async def _send_heartbeat(self, status: str = 'Active'):
+        """Send heartbeat to server"""
+        try:
+            if not self.is_registered or not self.communication:
+                return
+            
+            # Get system metrics
+            cpu_percent = psutil.cpu_percent(interval=1)
+            memory = psutil.virtual_memory()
+            disk = psutil.disk_usage('/')
+            
+            heartbeat_data = AgentHeartbeatData(
+                agent_id=self.agent_id,
+                status=status,
+                timestamp=datetime.now().isoformat(),
+                cpu_usage=cpu_percent,
+                memory_usage=memory.percent,
+                disk_usage=disk.percent,
+                uptime=time.time() - psutil.boot_time(),
+                collector_status=self._get_collector_status()
+            )
+            
+            await self.communication.send_heartbeat(heartbeat_data)
+            self.last_heartbeat = datetime.now()
+            
+        except Exception as e:
+            self.logger.error(f"❌ Heartbeat send failed: {e}")
+    
+    def _get_collector_status(self) -> Dict[str, str]:
+        """Get status of all collectors"""
+        status = {}
+        for name, collector in self.collectors.items():
+            try:
+                if hasattr(collector, 'get_status'):
+                    status[name] = collector.get_status()
+                else:
+                    status[name] = 'Unknown'
+            except:
+                status[name] = 'Error'
+        return status
+    
+    async def _linux_system_monitor(self):
+        """Linux-specific system monitoring tasks"""
+        try:
+            self.logger.info("🔍 Starting Linux system monitor...")
+            
+            while self.is_running and not self.is_paused:
+                try:
+                    # Monitor system resources
+                    await self._check_system_resources()
+                    
+                    # Monitor critical system files
+                    await self._check_critical_files()
+                    
+                    # Monitor system services
+                    await self._check_system_services()
+                    
+                    # Wait before next check
+                    await asyncio.sleep(60)  # Check every minute
+                    
+                except Exception as e:
+                    self.logger.error(f"❌ Linux system monitor error: {e}")
+                    await asyncio.sleep(30)
+                    
+        except asyncio.CancelledError:
+            self.logger.info("🛑 Linux system monitor cancelled")
+        except Exception as e:
+            self.logger.error(f"❌ Linux system monitor failed: {e}")
+    
+    async def _check_system_resources(self):
+        """Check system resource usage"""
+        try:
+            # CPU usage
+            cpu_percent = psutil.cpu_percent(interval=1)
+            if cpu_percent > 90:
+                self.logger.warning(f"⚠️ High CPU usage: {cpu_percent}%")
+            
+            # Memory usage
+            memory = psutil.virtual_memory()
+            if memory.percent > 90:
+                self.logger.warning(f"⚠️ High memory usage: {memory.percent}%")
+            
+            # Disk usage
+            disk = psutil.disk_usage('/')
+            if disk.percent > 90:
+                self.logger.warning(f"⚠️ High disk usage: {disk.percent}%")
+            
+            # Load average
+            load_avg = os.getloadavg()
+            if load_avg[0] > 5.0:  # 5-minute load average
+                self.logger.warning(f"⚠️ High system load: {load_avg[0]}")
+                
+        except Exception as e:
+            self.logger.debug(f"System resource check error: {e}")
+    
+    async def _check_critical_files(self):
+        """Check critical system files for changes"""
+        try:
+            critical_files = [
+                '/etc/passwd',
+                '/etc/shadow',
+                '/etc/sudoers',
+                '/etc/hosts',
+                '/etc/resolv.conf'
+            ]
+            
+            for file_path in critical_files:
+                if os.path.exists(file_path):
+                    try:
+                        # Check file modification time
+                        stat = os.stat(file_path)
+                        # TODO: Implement file change detection logic
+                        pass
+                    except Exception as e:
+                        self.logger.debug(f"Could not check {file_path}: {e}")
+                        
+        except Exception as e:
+            self.logger.debug(f"Critical files check error: {e}")
+    
+    async def _check_system_services(self):
+        """Check critical system services"""
+        try:
+            # Check if auditd is running
+            try:
+                import subprocess
+                result = subprocess.run(['systemctl', 'is-active', 'auditd'], 
+                                      capture_output=True, timeout=5)
+                if result.returncode != 0:
+                    self.logger.warning("⚠️ auditd service is not running")
+            except:
+                pass
+            
+            # Check if rsyslog is running
+            try:
+                result = subprocess.run(['systemctl', 'is-active', 'rsyslog'], 
+                                      capture_output=True, timeout=5)
+                if result.returncode != 0:
+                    self.logger.warning("⚠️ rsyslog service is not running")
+            except:
+                pass
+                
+        except Exception as e:
+            self.logger.debug(f"System services check error: {e}")
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get current agent status"""
+        return {
+            'agent_id': self.agent_id,
+            'is_initialized': self.is_initialized,
+            'is_running': self.is_running,
+            'is_monitoring': self.is_monitoring,
+            'is_paused': self.is_paused,
+            'is_registered': self.is_registered,
+            'system_info': self.system_info,
+            'collectors': list(self.collectors.keys()),
+            'start_time': self.start_time.isoformat() if self.start_time else None,
+            'last_heartbeat': self.last_heartbeat.isoformat() if self.last_heartbeat else None,
+            'has_root_privileges': self.has_root_privileges
+        }
+    
+    def get_collector_status(self) -> Dict[str, Any]:
+        """Get detailed collector status"""
+        status = {}
+        for name, collector in self.collectors.items():
+            try:
+                if hasattr(collector, 'get_status'):
+                    status[name] = collector.get_status()
+                else:
+                    status[name] = {'status': 'Unknown'}
+            except Exception as e:
+                status[name] = {'status': 'Error', 'error': str(e)}
+        return status
