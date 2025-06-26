@@ -299,10 +299,13 @@ class LinuxServerCommunication:
             if not self.working_server:
                 return False, None, "No working server"
             
-            # FIXED: Convert event to database-compatible payload
-            payload = self._convert_event_to_database_payload(event_data)
+            # FIXED: Use event's to_dict() method which now returns snake_case fields
+            payload = event_data.to_dict()
             
-            if payload is None:
+            if 'error' in payload:
+                return False, None, f"Event payload error: {payload['error']}"
+            
+            if not payload.get('agent_id'):
                 return False, None, "Event payload conversion failed - missing agent_id"
             
             # Send to server
@@ -334,80 +337,81 @@ class LinuxServerCommunication:
                 self.logger.error(f"❌ CRITICAL: Linux event missing agent_id - Type: {event_data.event_type}, Action: {event_data.event_action}")
                 return None
             
-            # FIXED: Create payload matching database schema exactly
+            # FIXED: Create payload matching database schema exactly (snake_case)
             payload = {
                 # REQUIRED FIELDS (matching Events table)
-                'AgentID': event_data.agent_id,
-                'EventType': event_data.event_type,  # Process, File, Network, Registry, Authentication, System
-                'EventAction': event_data.event_action,  # String value, not enum
-                'EventTimestamp': event_data.event_timestamp.isoformat(),
-                'Severity': event_data.severity,  # Info, Low, Medium, High, Critical
+                'agent_id': event_data.agent_id,
+                'event_type': event_data.event_type,  # Process, File, Network, Registry, Authentication, System
+                'event_action': event_data.event_action,  # String value, not enum
+                'event_timestamp': event_data.event_timestamp.isoformat(),
+                'severity': event_data.severity,  # Info, Low, Medium, High, Critical
                 
                 # Process fields (optional)
-                'ProcessID': event_data.process_id,
-                'ProcessName': event_data.process_name,
-                'ProcessPath': event_data.process_path,
-                'CommandLine': event_data.command_line,
-                'ParentPID': event_data.parent_pid,
-                'ParentProcessName': event_data.parent_process_name,
-                'ProcessUser': event_data.process_user,
-                'ProcessHash': event_data.process_hash,
+                'process_id': event_data.process_id,
+                'process_name': event_data.process_name,
+                'process_path': event_data.process_path,
+                'command_line': event_data.command_line,
+                'parent_pid': event_data.parent_pid,
+                'parent_process_name': event_data.parent_process_name,
+                'process_user': event_data.process_user,
+                'process_hash': event_data.process_hash,
                 
                 # File fields (optional)
-                'FilePath': event_data.file_path,
-                'FileName': event_data.file_name,
-                'FileSize': event_data.file_size,
-                'FileHash': event_data.file_hash,
-                'FileExtension': event_data.file_extension,
-                'FileOperation': event_data.file_operation,
+                'file_path': event_data.file_path,
+                'file_name': event_data.file_name,
+                'file_size': event_data.file_size,
+                'file_hash': event_data.file_hash,
+                'file_extension': event_data.file_extension,
+                'file_operation': event_data.file_operation,
                 
                 # Network fields (optional)
-                'SourceIP': event_data.source_ip,
-                'DestinationIP': event_data.destination_ip,
-                'SourcePort': event_data.source_port,
-                'DestinationPort': event_data.destination_port,
-                'Protocol': event_data.protocol,
-                'Direction': event_data.direction,
+                'source_ip': event_data.source_ip,
+                'destination_ip': event_data.destination_ip,
+                'source_port': event_data.source_port,
+                'destination_port': event_data.destination_port,
+                'protocol': event_data.protocol,
+                'connection_status': event_data.connection_status,
                 
-                # Registry fields (optional, for compatibility)
-                'RegistryKey': event_data.registry_key,
-                'RegistryValueName': event_data.registry_value_name,
-                'RegistryValueData': event_data.registry_value_data,
-                'RegistryOperation': event_data.registry_operation,
+                # Registry fields (optional)
+                'registry_key': event_data.registry_key,
+                'registry_value': event_data.registry_value,
+                'registry_operation': event_data.registry_operation,
                 
                 # Authentication fields (optional)
-                'LoginUser': event_data.login_user,
-                'LoginType': event_data.login_type,
-                'LoginResult': event_data.login_result,
+                'user_name': event_data.user_name,
+                'login_status': event_data.login_status,
+                'authentication_method': event_data.authentication_method,
+                'source_ip': event_data.source_ip,
                 
-                # Detection status fields
-                'ThreatLevel': event_data.threat_level,  # None, Suspicious, Malicious
-                'RiskScore': event_data.risk_score,  # 0-100
-                'Analyzed': event_data.analyzed,
-                'AnalyzedAt': event_data.analyzed_at.isoformat() if event_data.analyzed_at else None,
+                # System fields (optional)
+                'system_event': event_data.system_event,
+                'system_message': event_data.system_message,
+                
+                # Threat detection fields
+                'threat_level': event_data.threat_level,  # None, Suspicious, Malicious
+                'risk_score': event_data.risk_score,  # 0-100
+                'analyzed': event_data.analyzed,  # Boolean
                 
                 # Raw event data (JSON string)
-                'RawEventData': event_data.raw_event_data
+                'raw_event_data': event_data.raw_event_data
             }
             
-            # Remove None values to match database requirements
-            cleaned_payload = {}
-            for key, value in payload.items():
-                if value is not None:
-                    cleaned_payload[key] = value
+            # Clean payload - remove None values
+            cleaned_payload = {k: v for k, v in payload.items() if v is not None}
             
-            # Ensure we have minimum required fields
-            required_fields = ['AgentID', 'EventType', 'EventAction', 'EventTimestamp', 'Severity']
+            # Validate required fields
+            required_fields = ['agent_id', 'event_type', 'event_action', 'event_timestamp']
+            
             for field in required_fields:
                 if field not in cleaned_payload:
                     self.logger.error(f"❌ Missing required field in payload: {field}")
                     return None
             
             self.logger.debug(f"📦 LINUX DATABASE PAYLOAD CREATED:")
-            self.logger.debug(f"   🎯 Type: {cleaned_payload.get('EventType')}")
-            self.logger.debug(f"   🔧 Action: {cleaned_payload.get('EventAction')}")
-            self.logger.debug(f"   📊 Severity: {cleaned_payload.get('Severity')}")
-            self.logger.debug(f"   🆔 Agent ID: {cleaned_payload.get('AgentID')}")
+            self.logger.debug(f"   🎯 Type: {cleaned_payload.get('event_type')}")
+            self.logger.debug(f"   🔧 Action: {cleaned_payload.get('event_action')}")
+            self.logger.debug(f"   📊 Severity: {cleaned_payload.get('severity')}")
+            self.logger.debug(f"   🆔 Agent ID: {cleaned_payload.get('agent_id')}")
             
             return cleaned_payload
             
@@ -612,40 +616,44 @@ class LinuxServerCommunication:
             
             url = f"{self.base_url}/api/v1/agents/register"
             
-            # FIXED: Create registration payload matching database schema
+            # FIXED: Create registration payload matching API expectations (snake_case)
             registration_payload = {
-                # REQUIRED fields matching Agents table
-                'HostName': registration_data.hostname,
-                'IPAddress': registration_data.ip_address,
-                'OperatingSystem': registration_data.operating_system,
-                'OSVersion': registration_data.os_version or platform.release(),
-                'Architecture': registration_data.architecture or platform.machine(),
-                'AgentVersion': '2.1.0-Linux',
+                # REQUIRED fields
+                'hostname': registration_data.hostname,
+                'ip_address': registration_data.ip_address,
+                'operating_system': registration_data.operating_system,
+                'os_version': registration_data.os_version or platform.release(),
+                'architecture': registration_data.architecture or platform.machine(),
+                'agent_version': '2.1.0-Linux',
                 
                 # OPTIONAL fields
-                'MACAddress': registration_data.mac_address,
-                'Domain': registration_data.domain,
-                'InstallPath': registration_data.install_path,
+                'mac_address': registration_data.mac_address,
+                'domain': registration_data.domain,
+                'install_path': registration_data.install_path,
                 
                 # Default values for required fields
-                'Status': 'Active',
-                'CPUUsage': 0.0,
-                'MemoryUsage': 0.0,
-                'DiskUsage': 0.0,
-                'NetworkLatency': 0,
-                'MonitoringEnabled': True,
+                'status': 'Active',
+                'cpu_usage': 0.0,
+                'memory_usage': 0.0,
+                'disk_usage': 0.0,
+                'network_latency': 0,
+                'monitoring_enabled': True,
                 
                 # Linux-specific metadata
-                'Platform': 'linux',
-                'KernelVersion': registration_data.kernel_version,
-                'Distribution': registration_data.distribution,
-                'DistributionVersion': registration_data.distribution_version,
-                'HasRootPrivileges': registration_data.has_root_privileges,
-                'CurrentUser': registration_data.current_user,
-                'EffectiveUser': registration_data.effective_user,
-                'UserGroups': registration_data.user_groups,
-                'Capabilities': registration_data.capabilities
+                'platform': 'linux',
+                'kernel_version': registration_data.kernel_version,
+                'distribution': registration_data.distribution,
+                'distribution_version': registration_data.distribution_version,
+                'has_root_privileges': registration_data.has_root_privileges,
+                'current_user': registration_data.current_user,
+                'effective_user': registration_data.effective_user,
+                'user_groups': registration_data.user_groups,
+                'capabilities': registration_data.capabilities
             }
+            
+            # Ensure 'hostname' is never None
+            if 'hostname' in registration_payload and not registration_payload['hostname']:
+                registration_payload['hostname'] = 'unknown'
             
             response = await self._make_request_with_retry('POST', url, registration_payload)
             
@@ -673,28 +681,41 @@ class LinuxServerCommunication:
             
             url = f"{self.base_url}/api/v1/agents/heartbeat"
             
-            # FIXED: Create heartbeat payload matching database expectations
+            # FIXED: Create heartbeat payload matching API expectations (snake_case)
             payload = {
-                'Status': heartbeat_data.status,
-                'CPUUsage': heartbeat_data.cpu_usage,
-                'MemoryUsage': heartbeat_data.memory_usage,
-                'DiskUsage': heartbeat_data.disk_usage,
-                'NetworkLatency': heartbeat_data.network_latency,
-                'Platform': 'linux',
-                'Uptime': heartbeat_data.uptime,
-                'LoadAverage': heartbeat_data.load_average,
-                'MemoryDetails': heartbeat_data.memory_details,
-                'DiskDetails': heartbeat_data.disk_details,
-                'NetworkDetails': heartbeat_data.network_details,
-                'ActiveProcesses': heartbeat_data.active_processes,
-                'CollectorStatus': heartbeat_data.collector_status,
-                'EventsCollected': heartbeat_data.events_collected,
-                'EventsSent': heartbeat_data.events_sent,
-                'EventsFailed': heartbeat_data.events_failed,
-                'AlertsReceived': heartbeat_data.alerts_received,
-                'SecurityStatus': heartbeat_data.security_status,
-                'ThreatLevel': heartbeat_data.threat_level
+                'hostname': heartbeat_data.hostname,
+                'status': heartbeat_data.status,
+                'cpu_usage': heartbeat_data.cpu_usage,
+                'memory_usage': heartbeat_data.memory_usage,
+                'disk_usage': heartbeat_data.disk_usage,
+                'network_latency': heartbeat_data.network_latency,
+                'platform': 'linux',
+                'uptime': heartbeat_data.uptime,
+                'load_average': heartbeat_data.load_average,
+                'memory_details': heartbeat_data.memory_details,
+                'disk_details': heartbeat_data.disk_details,
+                'network_details': heartbeat_data.network_details,
+                'active_processes': heartbeat_data.active_processes,
+                'collector_status': heartbeat_data.collector_status,
+                'events_collected': heartbeat_data.events_collected,
+                'events_sent': heartbeat_data.events_sent,
+                'events_failed': heartbeat_data.events_failed,
+                'alerts_received': heartbeat_data.alerts_received,
+                'security_status': heartbeat_data.security_status,
+                'threat_level': heartbeat_data.threat_level,
+                'agent_process_id': heartbeat_data.agent_process_id,
+                'timestamp': heartbeat_data.timestamp,
+                'metadata': heartbeat_data.metadata
             }
+            # Add optional fields if present
+            if hasattr(heartbeat_data, 'ip_address') and heartbeat_data.ip_address:
+                payload['ip_address'] = heartbeat_data.ip_address
+            if hasattr(heartbeat_data, 'operating_system') and heartbeat_data.operating_system:
+                payload['operating_system'] = heartbeat_data.operating_system
+            
+            # Ensure 'hostname' is never None
+            if 'hostname' in payload and not payload['hostname']:
+                payload['hostname'] = 'unknown'
             
             response = await self._make_request_with_retry('POST', url, payload)
             return response or {
@@ -715,7 +736,7 @@ class LinuxServerCommunication:
     async def close(self):
         """Close communication session"""
         try:
-            if self.session and not self._session_closed:
+            if self.session and not self.session.closed:
                 await self.session.close()
                 self._session_closed = True
         except Exception as e:

@@ -326,6 +326,10 @@ class LinuxAgentManager:
             if self.event_processor:
                 await self.event_processor.stop()
             
+            # Close communication session
+            if self.communication:
+                await self.communication.close()
+            
             # Send final heartbeat
             if self.is_registered:
                 try:
@@ -728,7 +732,11 @@ class LinuxAgentManager:
         for name, collector in self.collectors.items():
             try:
                 if hasattr(collector, 'get_status'):
-                    status[name] = collector.get_status()
+                    collector_status = collector.get_status()
+                    if isinstance(collector_status, dict):
+                        status[name] = collector_status
+                    else:
+                        status[name] = {'status': collector_status}
                 else:
                     status[name] = {'status': 'Unknown'}
             except Exception as e:

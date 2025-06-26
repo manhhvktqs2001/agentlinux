@@ -4,6 +4,7 @@ Linux Network Collector - Monitor network connections using /proc/net and psutil
 Optimized for Linux network monitoring with /proc filesystem integration
 """
 
+import os
 import psutil
 import socket
 import time

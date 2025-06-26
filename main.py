@@ -422,7 +422,10 @@ class LinuxEDRAgent:
     def signal_handler(self, signum, frame):
         """Handle interrupt signals"""
         self.logger.info(f"🛑 Received signal {signum}, stopping agent...")
+        print("\n🛑 Agent stopped by user (Ctrl+C)")
         asyncio.create_task(self.stop())
+        import sys
+        sys.exit(0)
 
 async def main():
     """Main function to run the Linux agent"""

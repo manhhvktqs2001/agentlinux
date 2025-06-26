@@ -30,22 +30,47 @@ from agent.schemas.events import EventData, EventAction
 class LinuxFileEventHandler(FileSystemEventHandler):
     """Linux file system event handler using inotify"""
     
-    def __init__(self, collector):
+    def __init__(self, collector, loop):
         super().__init__()
         self.collector = collector
         self.logger = collector.logger
+        self.loop = loop
     
-    def on_modified(self, event: FileSystemEvent):
+    def on_modified(self, event):
+        """Handle file modification events"""
         if not event.is_directory:
-            asyncio.create_task(self.collector._handle_file_event('modified', event.src_path))
+            try:
+                if self.loop.is_running():
+                    asyncio.run_coroutine_threadsafe(
+                        self.collector._handle_file_event('modified', event.src_path), 
+                        self.loop
+                    )
+            except Exception as e:
+                self.collector.logger.error(f"❌ File event handling error: {e}")
     
-    def on_created(self, event: FileSystemEvent):
+    def on_created(self, event):
+        """Handle file creation events"""
         if not event.is_directory:
-            asyncio.create_task(self.collector._handle_file_event('created', event.src_path))
+            try:
+                if self.loop.is_running():
+                    asyncio.run_coroutine_threadsafe(
+                        self.collector._handle_file_event('created', event.src_path), 
+                        self.loop
+                    )
+            except Exception as e:
+                self.collector.logger.error(f"❌ File event handling error: {e}")
     
-    def on_deleted(self, event: FileSystemEvent):
+    def on_deleted(self, event):
+        """Handle file deletion events"""
         if not event.is_directory:
-            asyncio.create_task(self.collector._handle_file_event('deleted', event.src_path))
+            try:
+                if self.loop.is_running():
+                    asyncio.run_coroutine_threadsafe(
+                        self.collector._handle_file_event('deleted', event.src_path), 
+                        self.loop
+                    )
+            except Exception as e:
+                self.collector.logger.error(f"❌ File event handling error: {e}")
     
     def on_moved(self, event: FileSystemEvent):
         if not event.is_directory:
@@ -123,6 +148,41 @@ class LinuxFileCollector(LinuxBaseCollector):
         }
         
         self.logger.info(f"🐧 Linux File Collector initialized (inotify: {self.inotify_enabled})")
+        
+        # Save the main event loop for use in event handler
+        try:
+            self.loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.loop = asyncio.get_event_loop()
+        
+        if self.inotify_enabled:
+            try:
+                # Setup inotify monitoring
+                self.observer = Observer()
+                self.event_handler = LinuxFileEventHandler(self, self.loop)
+                
+                # Add watches for monitored paths
+                for path in self.monitor_paths:
+                    if os.path.exists(path):
+                        try:
+                            self.observer.schedule(
+                                self.event_handler,
+                                path,
+                                recursive=True
+                            )
+                            self.logger.debug(f"Added inotify watch: {path}")
+                        except Exception as e:
+                            self.logger.warning(f"⚠️ Failed to watch {path}: {e}")
+                
+                self.observer.start()
+                self.logger.info("✅ Linux file monitoring started with inotify")
+                
+            except Exception as e:
+                self.logger.error(f"❌ Failed to start inotify monitoring: {e}")
+                self.inotify_enabled = False
+        
+        if not self.inotify_enabled:
+            self.logger.info("📁 Linux file monitoring started with polling")
     
     def _check_inotify_support(self) -> bool:
         """Check if inotify is supported on this system"""
@@ -178,7 +238,7 @@ class LinuxFileCollector(LinuxBaseCollector):
             try:
                 # Setup inotify monitoring
                 self.observer = Observer()
-                self.event_handler = LinuxFileEventHandler(self)
+                self.event_handler = LinuxFileEventHandler(self, self.loop)
                 
                 # Add watches for monitored paths
                 for path in self.monitor_paths:
@@ -269,7 +329,7 @@ class LinuxFileCollector(LinuxBaseCollector):
             # Create event
             event = await self._create_file_event(action, file_path, old_path)
             if event:
-                await self.add_event(event)
+                await self._send_event_immediately(event)
                 self.stats['inotify_events'] += 1
                 
                 # Update stats by action

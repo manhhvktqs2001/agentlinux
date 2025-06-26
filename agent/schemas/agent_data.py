@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 import platform
 import os
+import json
 
 @dataclass
 class AgentRegistrationData:
@@ -367,51 +368,41 @@ class AgentRegistrationData:
         return capabilities
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for database insertion (matching Agents table schema)"""
+        """Convert to dictionary for database insertion (matching Agents table schema and API expectations)"""
         try:
-            # Create dictionary with exact database field names
+            # Create dictionary with API field names (snake_case)
             data = {
                 # REQUIRED fields
-                'HostName': self.hostname,
-                'IPAddress': self.ip_address,
-                'OperatingSystem': self.operating_system,
-                'OSVersion': self.os_version,
-                'Architecture': self.architecture,
-                'AgentVersion': self.agent_version,
-                
+                'hostname': self.hostname or 'unknown',
+                'ip_address': self.ip_address,
+                'operating_system': self.operating_system,
+                'os_version': self.os_version,
+                'architecture': self.architecture,
+                'agent_version': self.agent_version,
                 # OPTIONAL fields
-                'MACAddress': self.mac_address,
-                'Domain': self.domain,
-                'InstallPath': self.install_path,
-                
-                # STATUS and METRICS fields
-                'Status': self.status,
-                'CPUUsage': self.cpu_usage,
-                'MemoryUsage': self.memory_usage,
-                'DiskUsage': self.disk_usage,
-                'NetworkLatency': self.network_latency,
-                'MonitoringEnabled': self.monitoring_enabled,
-                
-                # TIMESTAMPS (database will set CreatedAt and UpdatedAt)
-                'LastHeartbeat': datetime.now(),
-                'FirstSeen': self.registration_time,
-                
-                # METADATA as JSON string for any additional data
-                'Metadata': json.dumps(self.metadata, default=str) if self.metadata else None
+                'mac_address': self.mac_address,
+                'domain': self.domain,
+                'install_path': self.install_path,
+                'status': self.status,
+                'cpu_usage': self.cpu_usage,
+                'memory_usage': self.memory_usage,
+                'disk_usage': self.disk_usage,
+                'network_latency': self.network_latency,
+                'monitoring_enabled': self.monitoring_enabled,
+                'platform': 'linux',
+                'kernel_version': self.kernel_version,
+                'distribution': self.distribution,
+                'distribution_version': self.distribution_version,
+                'has_root_privileges': self.has_root_privileges,
+                'current_user': self.current_user,
+                'effective_user': self.effective_user,
+                'user_groups': self.user_groups,
+                'capabilities': self.capabilities
             }
-            
-            # Remove None values for optional fields
+            # Remove None values
             return {k: v for k, v in data.items() if v is not None}
-            
         except Exception as e:
-            return {
-                'error': str(e), 
-                'HostName': self.hostname or 'unknown',
-                'IPAddress': self.ip_address or '127.0.0.1',
-                'OperatingSystem': self.operating_system or 'Linux Unknown',
-                'AgentVersion': self.agent_version or '2.1.0-Linux',
-                'Status': 'Active'
-            }
+            return {'error': f'AgentRegistrationData serialization failed: {str(e)}'}
 
 @dataclass
 class AgentHeartbeatData:
@@ -789,6 +780,3 @@ def validate_agent_registration_data(data: AgentRegistrationData) -> tuple[bool,
         
     except Exception as e:
         return False, f"Validation error: {e}"
-
-# Import json for metadata serialization
-import json

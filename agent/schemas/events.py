@@ -230,81 +230,56 @@ class EventData:
             self.raw_event_data = f'{{"platform": "linux", "error": "{str(e)}"}}'
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert event to dictionary for database insertion"""
+        """Convert to dictionary for API submission (snake_case field names, no registry fields for Linux)"""
         try:
-            # Create dictionary with database-compatible field names
-            event_dict = {
-                'AgentID': self.agent_id,
-                'EventType': self.event_type,
-                'EventAction': self.event_action,
-                'EventTimestamp': self.event_timestamp,
-                'Severity': self.severity,
-                
-                # Process fields
-                'ProcessID': self.process_id,
-                'ProcessName': self.process_name,
-                'ProcessPath': self.process_path,
-                'CommandLine': self.command_line,
-                'ParentPID': self.parent_pid,
-                'ParentProcessName': self.parent_process_name,
-                'ProcessUser': self.process_user,
-                'ProcessHash': self.process_hash,
-                
-                # File fields
-                'FilePath': self.file_path,
-                'FileName': self.file_name,
-                'FileSize': self.file_size,
-                'FileHash': self.file_hash,
-                'FileExtension': self.file_extension,
-                'FileOperation': self.file_operation,
-                
-                # Network fields
-                'SourceIP': self.source_ip,
-                'DestinationIP': self.destination_ip,
-                'SourcePort': self.source_port,
-                'DestinationPort': self.destination_port,
-                'Protocol': self.protocol,
-                'Direction': self.direction,
-                
-                # Registry fields
-                'RegistryKey': self.registry_key,
-                'RegistryValueName': self.registry_value_name,
-                'RegistryValueData': self.registry_value_data,
-                'RegistryOperation': self.registry_operation,
-                
-                # Authentication fields
-                'LoginUser': self.login_user,
-                'LoginType': self.login_type,
-                'LoginResult': self.login_result,
-                
-                # Detection fields
-                'ThreatLevel': self.threat_level,
-                'RiskScore': self.risk_score,
-                'Analyzed': self.analyzed,
-                'AnalyzedAt': self.analyzed_at,
-                
-                # Raw data
-                'RawEventData': self.raw_event_data,
-                
-                # Metadata
-                'CreatedAt': datetime.now()
+            data = {
+                # REQUIRED fields (snake_case)
+                'agent_id': self.agent_id,
+                'event_type': self.event_type,
+                'event_action': self.event_action,
+                'event_timestamp': self.event_timestamp.isoformat() if self.event_timestamp else None,
+                'severity': self.severity,
+                # Process fields (optional)
+                'process_id': self.process_id,
+                'process_name': self.process_name,
+                'process_path': self.process_path,
+                'command_line': self.command_line,
+                'parent_pid': self.parent_pid,
+                'parent_process_name': self.parent_process_name,
+                'process_user': self.process_user,
+                'process_hash': self.process_hash,
+                # File fields (optional)
+                'file_path': self.file_path,
+                'file_name': self.file_name,
+                'file_size': self.file_size,
+                'file_hash': self.file_hash,
+                'file_extension': self.file_extension,
+                'file_operation': self.file_operation,
+                # Network fields (optional)
+                'source_ip': self.source_ip,
+                'destination_ip': self.destination_ip,
+                'source_port': self.source_port,
+                'destination_port': self.destination_port,
+                'protocol': self.protocol,
+                'connection_status': self.connection_status,
+                # Authentication fields (optional)
+                'user_name': self.user_name,
+                'login_status': self.login_status,
+                'authentication_method': self.authentication_method,
+                # System fields (optional)
+                'system_event': self.system_event,
+                'system_message': self.system_message,
+                # Threat detection fields
+                'threat_level': self.threat_level,
+                'risk_score': self.risk_score,
+                'analyzed': self.analyzed,
+                # Raw event data
+                'raw_event_data': self.raw_event_data
             }
-            
-            # Remove None values to match database requirements
-            return {k: v for k, v in event_dict.items() if v is not None}
-            
+            # Remove None values
+            return {k: v for k, v in data.items() if v is not None}
         except Exception as e:
-            return {
-                'error': f'Serialization error: {e}',
-                'AgentID': self.agent_id,
-                'EventType': self.event_type or 'System',
-                'EventAction': self.event_action or 'Access',
-                'EventTimestamp': self.event_timestamp or datetime.now(),
-                'Severity': 'Info',
-                'ThreatLevel': 'None',
-                'RiskScore': 0,
-                'CreatedAt': datetime.now()
-            }
+            return {'error': f'Event serialization failed: {str(e)}'}
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'EventData':

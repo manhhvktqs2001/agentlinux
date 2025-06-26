@@ -14,6 +14,7 @@ import grp
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from pathlib import Path
+import json
 
 class LinuxBaseCollector(ABC):
     """Abstract base class for Linux data collectors"""
@@ -278,6 +279,11 @@ class LinuxBaseCollector(ABC):
             if hasattr(event_data, 'raw_event_data'):
                 if not event_data.raw_event_data:
                     event_data.raw_event_data = {}
+                elif isinstance(event_data.raw_event_data, str):
+                    try:
+                        event_data.raw_event_data = json.loads(event_data.raw_event_data)
+                    except Exception:
+                        event_data.raw_event_data = {'original_data': event_data.raw_event_data}
                 event_data.raw_event_data.update({
                     'platform': 'linux',
                     'collector': self.collector_name,
