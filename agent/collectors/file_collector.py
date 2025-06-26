@@ -1,7 +1,7 @@
-# agent/collectors/file_collector.py - Linux File Collector
+# agent/collectors/file_collector.py - FIXED Linux File Collector
 """
-Linux File Collector - Monitor file system using inotify and filesystem scanning
-Optimized for Linux file monitoring with inotify integration
+Linux File Collector - FIXED VERSION
+Monitor file system using inotify with proper event handling
 """
 
 import asyncio
@@ -28,7 +28,7 @@ from agent.collectors.base_collector import LinuxBaseCollector
 from agent.schemas.events import EventData, EventAction
 
 class LinuxFileEventHandler(FileSystemEventHandler):
-    """Linux file system event handler using inotify"""
+    """Linux file system event handler using inotify - FIXED VERSION"""
     
     def __init__(self, collector, loop):
         super().__init__()
@@ -46,7 +46,7 @@ class LinuxFileEventHandler(FileSystemEventHandler):
                         self.loop
                     )
             except Exception as e:
-                self.collector.logger.error(f"❌ File event handling error: {e}")
+                self.logger.error(f"❌ File event handling error: {e}")
     
     def on_created(self, event):
         """Handle file creation events"""
@@ -58,7 +58,7 @@ class LinuxFileEventHandler(FileSystemEventHandler):
                         self.loop
                     )
             except Exception as e:
-                self.collector.logger.error(f"❌ File event handling error: {e}")
+                self.logger.error(f"❌ File event handling error: {e}")
     
     def on_deleted(self, event):
         """Handle file deletion events"""
@@ -70,14 +70,22 @@ class LinuxFileEventHandler(FileSystemEventHandler):
                         self.loop
                     )
             except Exception as e:
-                self.collector.logger.error(f"❌ File event handling error: {e}")
+                self.logger.error(f"❌ File event handling error: {e}")
     
     def on_moved(self, event: FileSystemEvent):
+        """Handle file move events"""
         if not event.is_directory:
-            asyncio.create_task(self.collector._handle_file_event('moved', event.dest_path, event.src_path))
+            try:
+                if self.loop.is_running():
+                    asyncio.run_coroutine_threadsafe(
+                        self.collector._handle_file_event('moved', event.dest_path, event.src_path),
+                        self.loop
+                    )
+            except Exception as e:
+                self.logger.error(f"❌ File move event handling error: {e}")
 
 class LinuxFileCollector(LinuxBaseCollector):
-    """Linux File Collector with inotify support"""
+    """Linux File Collector with inotify support - FIXED VERSION"""
     
     def __init__(self, config_manager=None):
         super().__init__(config_manager, "LinuxFileCollector")
@@ -154,35 +162,6 @@ class LinuxFileCollector(LinuxBaseCollector):
             self.loop = asyncio.get_running_loop()
         except RuntimeError:
             self.loop = asyncio.get_event_loop()
-        
-        if self.inotify_enabled:
-            try:
-                # Setup inotify monitoring
-                self.observer = Observer()
-                self.event_handler = LinuxFileEventHandler(self, self.loop)
-                
-                # Add watches for monitored paths
-                for path in self.monitor_paths:
-                    if os.path.exists(path):
-                        try:
-                            self.observer.schedule(
-                                self.event_handler,
-                                path,
-                                recursive=True
-                            )
-                            self.logger.debug(f"Added inotify watch: {path}")
-                        except Exception as e:
-                            self.logger.warning(f"⚠️ Failed to watch {path}: {e}")
-                
-                self.observer.start()
-                self.logger.info("✅ Linux file monitoring started with inotify")
-                
-            except Exception as e:
-                self.logger.error(f"❌ Failed to start inotify monitoring: {e}")
-                self.inotify_enabled = False
-        
-        if not self.inotify_enabled:
-            self.logger.info("📁 Linux file monitoring started with polling")
     
     def _check_inotify_support(self) -> bool:
         """Check if inotify is supported on this system"""
@@ -314,8 +293,13 @@ class LinuxFileCollector(LinuxBaseCollector):
             return []
     
     async def _handle_file_event(self, action: str, file_path: str, old_path: str = None):
-        """Handle file system event from inotify"""
+        """Handle file system event from inotify - FIXED VERSION"""
         try:
+            # FIXED: Validate agent_id is available
+            if not self.agent_id:
+                self.logger.error(f"❌ CRITICAL: File event cannot be processed - agent_id is None")
+                return
+            
             # Check for event deduplication
             event_key = f"{action}:{file_path}"
             current_time = time.time()
@@ -326,9 +310,9 @@ class LinuxFileCollector(LinuxBaseCollector):
             
             self.recent_file_events[event_key] = current_time
             
-            # Create event
+            # Create event with proper validation
             event = await self._create_file_event(action, file_path, old_path)
-            if event:
+            if event and event.agent_id:  # FIXED: Validate event has agent_id
                 await self._send_event_immediately(event)
                 self.stats['inotify_events'] += 1
                 
@@ -341,6 +325,8 @@ class LinuxFileCollector(LinuxBaseCollector):
                     self.stats['file_deletion_events'] += 1
                 elif action == 'moved':
                     self.stats['file_move_events'] += 1
+            else:
+                self.logger.error(f"❌ Failed to create valid file event for {action}:{file_path}")
                     
         except Exception as e:
             self.logger.error(f"❌ File event handling failed: {e}")
@@ -383,7 +369,7 @@ class LinuxFileCollector(LinuxBaseCollector):
                         if file_key not in self.monitored_files:
                             # New file
                             event = await self._create_file_event('created', file_path)
-                            if event:
+                            if event and event.agent_id:  # FIXED: Validate agent_id
                                 events.append(event)
                                 self.stats['file_creation_events'] += 1
                         else:
@@ -393,7 +379,7 @@ class LinuxFileCollector(LinuxBaseCollector):
                             
                             if new_mtime > old_mtime:
                                 event = await self._create_file_event('modified', file_path)
-                                if event:
+                                if event and event.agent_id:  # FIXED: Validate agent_id
                                     events.append(event)
                                     self.stats['file_modification_events'] += 1
                         
@@ -557,8 +543,13 @@ class LinuxFileCollector(LinuxBaseCollector):
             return False
     
     async def _create_file_event(self, action: str, file_path: str, old_path: str = None):
-        """Create file system event with proper agent_id - FIXED"""
+        """Create file system event with proper agent_id validation - FIXED"""
         try:
+            # FIXED: Validate agent_id is available before creating event
+            if not self.agent_id:
+                self.logger.error(f"❌ CRITICAL: Cannot create file event - agent_id is None")
+                return None
+            
             action_map = {
                 'created': EventAction.CREATE,
                 'modified': EventAction.MODIFY,
@@ -566,15 +557,19 @@ class LinuxFileCollector(LinuxBaseCollector):
                 'moved': EventAction.MODIFY
             }
             event_action = action_map.get(action, EventAction.ACCESS)
+            
             file_info = None
             if action != 'deleted':
                 file_info = self._get_linux_file_info(file_path)
+            
             severity = self._determine_file_severity(file_path, action, file_info)
-            file_name = os.path.basename(file_path)
+            file_name = os.path.basename(file_path) if file_path else "Unknown"
+            
             if action == 'moved' and old_path:
                 description = f"🐧 LINUX FILE MOVED: {os.path.basename(old_path)} -> {file_name}"
             else:
                 description = f"🐧 LINUX FILE {action.upper()}: {file_name}"
+            
             # Ensure raw_event_data is a dictionary
             raw_event_data = {
                 'platform': 'linux',
@@ -583,33 +578,45 @@ class LinuxFileCollector(LinuxBaseCollector):
                 'is_suspicious': self._is_suspicious_file(file_path),
                 'monitoring_method': 'inotify' if self.inotify_enabled else 'polling'
             }
+            
             if file_info:
                 raw_event_data['file_info'] = file_info
             if old_path:
                 raw_event_data['old_path'] = old_path
+            
             if file_info and file_info.get('size', 0) > self.large_file_threshold:
                 self.stats['large_file_events'] += 1
                 raw_event_data['large_file'] = True
+            
+            # FIXED: Create event with validated agent_id
             event_data = EventData(
                 event_type="File",
                 event_action=event_action,
                 event_timestamp=datetime.now(),
                 severity=severity,
-                agent_id=self.agent_id,
+                agent_id=self.agent_id,  # FIXED: Ensure agent_id is set
                 file_path=file_path,
                 file_name=file_name,
                 file_size=file_info.get('size', 0) if file_info else 0,
-                file_extension=Path(file_path).suffix,
+                file_extension=Path(file_path).suffix if file_path else "",
                 description=description,
                 raw_event_data=raw_event_data
             )
+            
+            # FIXED: Double-check agent_id is set correctly
+            if not event_data.agent_id:
+                self.logger.error(f"❌ CRITICAL: Event created without agent_id - File: {file_path}")
+                return None
+            
             if self._is_suspicious_file(file_path):
                 self.stats['suspicious_file_events'] += 1
                 event_data.severity = 'High'
                 # Update dictionary properly
                 if isinstance(event_data.raw_event_data, dict):
                     event_data.raw_event_data['suspicious_reason'] = 'suspicious_file_pattern'
+            
             return event_data
+            
         except Exception as e:
             self.logger.error(f"❌ File event creation failed: {e}")
             return None
@@ -620,44 +627,35 @@ class LinuxFileCollector(LinuxBaseCollector):
             # Critical for system files
             if any(sys_path in file_path for sys_path in ['/etc/passwd', '/etc/shadow', '/etc/sudoers']):
                 return 'Critical'
-            
             # High for suspicious files
             if self._is_suspicious_file(file_path):
                 return 'High'
-            
             # High for executable files in user directories
             if '/home/' in file_path and file_info and file_info.get('is_executable'):
                 return 'High'
-            
             # Medium for interesting files
             if self._is_interesting_file(file_path):
                 return 'Medium'
-            
             # Medium for files in sensitive directories
             sensitive_dirs = ['/etc/', '/usr/bin/', '/usr/sbin/', '/bin/', '/sbin/']
             if any(file_path.startswith(sens_dir) for sens_dir in sensitive_dirs):
                 return 'Medium'
-            
             # Medium for large files
             if file_info and file_info.get('size', 0) > self.large_file_threshold:
                 return 'Medium'
-            
             return 'Info'
-            
         except Exception:
             return 'Info'
-    
+
     async def _create_file_system_summary_event(self):
         """Create file system summary event"""
         try:
             total_files = len(self.monitored_files)
-            
             return EventData(
                 event_type="File",
                 event_action=EventAction.RESOURCE_USAGE,
                 event_timestamp=datetime.now(),
                 severity="Info",
-                
                 description=f"🐧 LINUX FILE SYSTEM SUMMARY: {total_files} files monitored",
                 raw_event_data={
                     'platform': 'linux',
@@ -673,7 +671,7 @@ class LinuxFileCollector(LinuxBaseCollector):
         except Exception as e:
             self.logger.error(f"❌ File system summary event failed: {e}")
             return None
-    
+
     def get_stats(self) -> Dict:
         """Get detailed Linux file collector statistics"""
         base_stats = super().get_stats()

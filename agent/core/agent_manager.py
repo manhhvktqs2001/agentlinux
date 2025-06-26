@@ -1,7 +1,7 @@
-# agent/core/agent_manager.py - Linux Agent Manager
+# agent/core/agent_manager.py - FIXED Linux Agent Manager
 """
-Linux Agent Manager - Core agent management and coordination for Linux systems
-Optimized for Linux EDR monitoring with platform-specific features
+Linux Agent Manager - FIXED VERSION
+Core agent management and coordination for Linux systems with proper agent_id handling
 """
 
 import asyncio
@@ -25,7 +25,7 @@ from agent.collectors.network_collector import LinuxNetworkCollector
 from agent.schemas.agent_data import AgentRegistrationData, AgentHeartbeatData
 
 class LinuxAgentManager:
-    """Linux Agent Manager - Platform-specific implementation"""
+    """Linux Agent Manager - FIXED VERSION with proper agent_id handling"""
     
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
@@ -38,9 +38,9 @@ class LinuxAgentManager:
         self.is_monitoring = False
         self.is_paused = False
         
-        # Agent identification
+        # FIXED: Agent identification with proper persistence
         self.agent_id_file = os.path.join(os.path.dirname(__file__), 'agent_id.txt')
-        self.agent_id = self._load_agent_id()
+        self.agent_id = self._load_or_create_agent_id()
         self.is_registered = False
         
         # Linux system information
@@ -62,8 +62,42 @@ class LinuxAgentManager:
         self.has_root_privileges = os.geteuid() == 0
         
         self.logger.info(f"🐧 Linux Agent Manager initialized")
+        self.logger.info(f"   🆔 Agent ID: {self.agent_id}")
         self.logger.info(f"   📊 System: {self.system_info.get('distribution', 'Unknown')} {self.system_info.get('version', '')}")
         self.logger.info(f"   🔒 Root privileges: {self.has_root_privileges}")
+    
+    def _load_or_create_agent_id(self) -> str:
+        """Load existing agent ID or create new one with proper persistence"""
+        try:
+            # Try to load existing agent ID
+            if os.path.exists(self.agent_id_file):
+                with open(self.agent_id_file, 'r') as f:
+                    agent_id = f.read().strip()
+                    if agent_id and len(agent_id) >= 32:  # Valid UUID length
+                        self.logger.info(f"📋 Loaded existing agent ID: {agent_id[:8]}...")
+                        return agent_id
+            
+            # Create new agent ID
+            new_agent_id = str(uuid.uuid4())
+            
+            # Save to file
+            try:
+                os.makedirs(os.path.dirname(self.agent_id_file), exist_ok=True)
+                with open(self.agent_id_file, 'w') as f:
+                    f.write(new_agent_id)
+                os.chmod(self.agent_id_file, 0o600)  # Secure permissions
+                self.logger.info(f"🆕 Created new agent ID: {new_agent_id[:8]}...")
+            except Exception as e:
+                self.logger.error(f"❌ Could not save agent ID: {e}")
+            
+            return new_agent_id
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error with agent ID: {e}")
+            # Fallback to generated ID
+            fallback_id = str(uuid.uuid4())
+            self.logger.warning(f"⚠️ Using fallback agent ID: {fallback_id[:8]}...")
+            return fallback_id
     
     def _get_linux_system_info(self) -> Dict[str, str]:
         """Get comprehensive Linux system information"""
@@ -131,11 +165,16 @@ class LinuxAgentManager:
                 self.logger.error(f"❌ Server communication initialization failed: {e}")
                 raise Exception(f"Server communication failed: {e}")
             
-            # Initialize event processor
+            # Initialize event processor with agent_id
             try:
                 self.logger.info("⚙️ Initializing event processor...")
                 self.event_processor = EventProcessor(self.config_manager, self.communication)
-                self.logger.info("✅ Event processor initialized")
+                # FIXED: Set agent_id immediately after creation
+                if self.agent_id:
+                    self.event_processor.set_agent_id(self.agent_id)
+                    self.logger.info(f"✅ Event processor initialized with agent_id: {self.agent_id[:8]}...")
+                else:
+                    raise Exception("No agent_id available for event processor")
             except Exception as e:
                 self.logger.error(f"❌ Event processor initialization failed: {e}")
                 raise Exception(f"Event processor failed: {e}")
@@ -162,6 +201,12 @@ class LinuxAgentManager:
         """Check Linux-specific requirements"""
         try:
             self.logger.info("🔍 Checking Linux system requirements...")
+            
+            # Check agent ID
+            if not self.agent_id:
+                raise Exception("Agent ID not available")
+            else:
+                self.logger.info(f"✅ Agent ID available: {self.agent_id[:8]}...")
             
             # Check root privileges
             if self.requires_root and not self.has_root_privileges:
@@ -211,7 +256,7 @@ class LinuxAgentManager:
             return False
     
     async def _initialize_linux_collectors(self):
-        """Initialize Linux-specific data collectors"""
+        """Initialize Linux-specific data collectors with proper agent_id"""
         try:
             config = self.config_manager.get_config()
             collection_config = config.get('collection', {})
@@ -222,6 +267,10 @@ class LinuxAgentManager:
                     self.logger.info("🔄 Initializing Linux Process Collector...")
                     self.collectors['process'] = LinuxProcessCollector(self.config_manager)
                     self.collectors['process'].set_event_processor(self.event_processor)
+                    # FIXED: Set agent_id immediately
+                    if self.agent_id:
+                        self.collectors['process'].set_agent_id(self.agent_id)
+                        self.logger.info(f"✅ Process collector agent_id set: {self.agent_id[:8]}...")
                     await self.collectors['process'].initialize()
                     self.logger.info("✅ Linux process collector initialized")
                 except Exception as e:
@@ -233,6 +282,10 @@ class LinuxAgentManager:
                     self.logger.info("📁 Initializing Linux File Collector...")
                     self.collectors['file'] = LinuxFileCollector(self.config_manager)
                     self.collectors['file'].set_event_processor(self.event_processor)
+                    # FIXED: Set agent_id immediately
+                    if self.agent_id:
+                        self.collectors['file'].set_agent_id(self.agent_id)
+                        self.logger.info(f"✅ File collector agent_id set: {self.agent_id[:8]}...")
                     await self.collectors['file'].initialize()
                     self.logger.info("✅ Linux file collector initialized")
                 except Exception as e:
@@ -244,16 +297,14 @@ class LinuxAgentManager:
                     self.logger.info("🌐 Initializing Linux Network Collector...")
                     self.collectors['network'] = LinuxNetworkCollector(self.config_manager)
                     self.collectors['network'].set_event_processor(self.event_processor)
+                    # FIXED: Set agent_id immediately
+                    if self.agent_id:
+                        self.collectors['network'].set_agent_id(self.agent_id)
+                        self.logger.info(f"✅ Network collector agent_id set: {self.agent_id[:8]}...")
                     await self.collectors['network'].initialize()
                     self.logger.info("✅ Linux network collector initialized")
                 except Exception as e:
                     self.logger.error(f"❌ Linux network collector initialization failed: {e}")
-            
-            # TODO: Add more Linux-specific collectors
-            # - Authentication collector (using auth.log, wtmp, utmp)
-            # - System collector (using systemd, services, etc.)
-            # - Container collector (Docker, Podman)
-            # - Audit collector (auditd integration)
             
             self.logger.info(f"🎉 {len(self.collectors)} Linux collectors initialized successfully")
             
@@ -264,43 +315,68 @@ class LinuxAgentManager:
             raise
     
     async def start(self):
-        """Start the Linux agent"""
+        """Start the Linux agent with proper sequencing"""
         try:
             self.logger.info("🚀 Starting Linux agent...")
-            # Register with server FIRST
+            
+            # FIXED: Register with server FIRST
             await self._register_with_server()
+            
             # Ensure agent_id is available
             if not self.agent_id:
                 raise Exception("Linux agent registration failed - no agent_id received")
+            
             self.logger.info(f"✅ Agent registered with ID: {self.agent_id}")
-            # Set agent_id for event processor BEFORE starting
-            if self.event_processor and self.agent_id:
-                self.event_processor.set_agent_id(self.agent_id)
-                self.logger.info(f"[EVENT_PROCESSOR] Set AgentID: {self.agent_id}")
-            # Set agent_id on all collectors BEFORE starting them
-            for name, collector in self.collectors.items():
-                if hasattr(collector, 'set_agent_id') and self.agent_id:
-                    collector.set_agent_id(self.agent_id)
-                    self.logger.info(f"[{name.upper()}_COLLECTOR] Set AgentID: {self.agent_id}")
+            
+            # FIXED: Update agent_id everywhere after successful registration
+            await self._update_all_agent_ids()
+            
             # Start event processor
             await self.event_processor.start()
-            # Start collectors AFTER agent_id is set
+            
+            # Start collectors AFTER agent_id is set everywhere
             await self._start_collectors()
+            
             # Set final running state
             self.is_running = True
             self.is_monitoring = True
             self.start_time = datetime.now()
+            
             # Start heartbeat task
             asyncio.create_task(self._heartbeat_loop())
+            
             # Start Linux-specific monitoring tasks
             asyncio.create_task(self._linux_system_monitor())
+            
             self.logger.info(f"✅ Linux agent started successfully")
             self.logger.info(f"   🆔 Agent ID: {self.agent_id}")
             self.logger.info(f"   📊 Collectors: {list(self.collectors.keys())}")
             self.logger.info(f"   🐧 Platform: Linux ({self.system_info.get('distribution', 'Unknown')})")
+            
         except Exception as e:
             self.logger.error(f"❌ Linux agent start failed: {e}")
             raise
+    
+    async def _update_all_agent_ids(self):
+        """Update agent_id in all components after registration"""
+        try:
+            self.logger.info(f"🔄 Updating agent_id in all components: {self.agent_id[:8]}...")
+            
+            # Update event processor
+            if self.event_processor and self.agent_id:
+                self.event_processor.set_agent_id(self.agent_id)
+                self.logger.info(f"[EVENT_PROCESSOR] Updated AgentID: {self.agent_id[:8]}...")
+            
+            # Update all collectors
+            for name, collector in self.collectors.items():
+                if hasattr(collector, 'set_agent_id') and self.agent_id:
+                    collector.set_agent_id(self.agent_id)
+                    self.logger.info(f"[{name.upper()}_COLLECTOR] Updated AgentID: {self.agent_id[:8]}...")
+            
+            self.logger.info("✅ All components updated with agent_id")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to update agent_id in components: {e}")
     
     async def stop(self):
         """Stop the Linux agent gracefully"""
@@ -332,62 +408,12 @@ class LinuxAgentManager:
         except Exception as e:
             self.logger.error(f"❌ Linux agent stop error: {e}")
     
-    async def pause(self):
-        """Pause Linux agent monitoring"""
-        try:
-            if not self.is_paused:
-                self.is_paused = True
-                self.logger.info("⏸️ Linux agent monitoring PAUSED")
-                
-                # Pause all collectors
-                for name, collector in self.collectors.items():
-                    try:
-                        if hasattr(collector, 'pause'):
-                            await collector.pause()
-                        self.logger.debug(f"⏸️ Paused {name} collector")
-                    except Exception as e:
-                        self.logger.error(f"❌ Failed to pause {name} collector: {e}")
-                
-                # Send pause status
-                if self.is_registered:
-                    try:
-                        await self._send_heartbeat(status='Paused')
-                    except:
-                        pass
-        except Exception as e:
-            self.logger.error(f"❌ Linux agent pause error: {e}")
-    
-    async def resume(self):
-        """Resume Linux agent monitoring"""
-        try:
-            if self.is_paused:
-                self.is_paused = False
-                self.logger.info("▶️ Linux agent monitoring RESUMED")
-                
-                # Resume all collectors
-                for name, collector in self.collectors.items():
-                    try:
-                        if hasattr(collector, 'resume'):
-                            await collector.resume()
-                        self.logger.debug(f"▶️ Resumed {name} collector")
-                    except Exception as e:
-                        self.logger.error(f"❌ Failed to resume {name} collector: {e}")
-                
-                # Send active status
-                if self.is_registered:
-                    try:
-                        await self._send_heartbeat(status='Active')
-                    except:
-                        pass
-        except Exception as e:
-            self.logger.error(f"❌ Linux agent resume error: {e}")
-    
     async def _register_with_server(self):
-        """Register Linux agent with EDR server"""
+        """Register Linux agent with EDR server using existing agent_id"""
         try:
             self.logger.info("📡 Registering Linux agent with EDR server...")
             
-            # Create registration data
+            # Create registration data with the existing agent_id
             registration_data = AgentRegistrationData(
                 hostname=self.system_info['hostname'],
                 ip_address=self._get_local_ip(),
@@ -397,16 +423,32 @@ class LinuxAgentManager:
                 agent_version='2.1.0-Linux',
                 mac_address=self._get_mac_address(),
                 domain=self._get_domain(),
-                install_path=str(Path(__file__).resolve().parent.parent.parent)
+                install_path=str(Path(__file__).resolve().parent.parent.parent),
+                kernel_version=self.system_info.get('kernel'),
+                distribution=self.system_info.get('distribution'),
+                distribution_version=self.system_info.get('version'),
+                has_root_privileges=self.has_root_privileges,
+                current_user=self.system_info.get('current_user'),
+                effective_user=self.system_info.get('effective_user')
             )
             
             # Send registration request
             response = await self.communication.register_agent(registration_data)
             
             if response and response.get('success'):
-                self.agent_id = response.get('agent_id')
+                # Use the agent_id from response OR keep our existing one
+                server_agent_id = response.get('agent_id')
+                
+                if server_agent_id and server_agent_id != self.agent_id:
+                    # Server assigned a new ID - update ours
+                    self.logger.info(f"📋 Server assigned new agent_id: {server_agent_id[:8]}...")
+                    self.agent_id = server_agent_id
+                    self._save_agent_id(self.agent_id)
+                else:
+                    # Keep our existing agent_id
+                    self.logger.info(f"📋 Using existing agent_id: {self.agent_id[:8]}...")
+                
                 self.is_registered = True
-                self._save_agent_id(self.agent_id)
                 
                 self.logger.info(f"✅ Linux agent registered successfully: {self.agent_id}")
                 self.logger.info(f"   🖥️ Hostname: {self.system_info['hostname']}")
@@ -418,11 +460,23 @@ class LinuxAgentManager:
                     self.config['agent']['heartbeat_interval'] = response['heartbeat_interval']
                     
             else:
-                raise Exception("Linux agent registration failed")
+                error_msg = response.get('error', 'Unknown error') if response else 'No response'
+                raise Exception(f"Linux agent registration failed: {error_msg}")
                 
         except Exception as e:
             self.logger.error(f"❌ Linux agent registration failed: {e}")
             raise
+    
+    def _save_agent_id(self, agent_id: str):
+        """Save agent ID to file"""
+        try:
+            os.makedirs(os.path.dirname(self.agent_id_file), exist_ok=True)
+            with open(self.agent_id_file, 'w') as f:
+                f.write(agent_id)
+            os.chmod(self.agent_id_file, 0o600)
+            self.logger.debug(f"Agent ID saved to {self.agent_id_file}")
+        except Exception as e:
+            self.logger.error(f"Could not save agent ID: {e}")
     
     def _get_local_ip(self) -> str:
         """Get local IP address"""
@@ -472,27 +526,6 @@ class LinuxAgentManager:
         except Exception as e:
             self.logger.debug(f"Could not get domain: {e}")
             return None
-    
-    def _load_agent_id(self) -> Optional[str]:
-        """Load agent ID from file"""
-        try:
-            if os.path.exists(self.agent_id_file):
-                with open(self.agent_id_file, 'r') as f:
-                    agent_id = f.read().strip()
-                    if agent_id:
-                        return agent_id
-        except Exception as e:
-            self.logger.debug(f"Could not load agent ID: {e}")
-        return None
-    
-    def _save_agent_id(self, agent_id: str):
-        """Save agent ID to file"""
-        try:
-            os.makedirs(os.path.dirname(self.agent_id_file), exist_ok=True)
-            with open(self.agent_id_file, 'w') as f:
-                f.write(agent_id)
-        except Exception as e:
-            self.logger.error(f"Could not save agent ID: {e}")
     
     async def _start_collectors(self):
         """Start all Linux collectors"""
@@ -569,6 +602,7 @@ class LinuxAgentManager:
             
             heartbeat_data = AgentHeartbeatData(
                 agent_id=self.agent_id,
+                hostname=self.system_info['hostname'],
                 status=status,
                 timestamp=datetime.now().isoformat(),
                 cpu_usage=cpu_percent,
@@ -590,7 +624,11 @@ class LinuxAgentManager:
         for name, collector in self.collectors.items():
             try:
                 if hasattr(collector, 'get_status'):
-                    status[name] = collector.get_status()
+                    collector_status = collector.get_status()
+                    if isinstance(collector_status, dict):
+                        status[name] = collector_status.get('is_running', 'Unknown')
+                    else:
+                        status[name] = str(collector_status)
                 else:
                     status[name] = 'Unknown'
             except:
@@ -699,6 +737,56 @@ class LinuxAgentManager:
                 
         except Exception as e:
             self.logger.debug(f"System services check error: {e}")
+    
+    async def pause(self):
+        """Pause Linux agent monitoring"""
+        try:
+            if not self.is_paused:
+                self.is_paused = True
+                self.logger.info("⏸️ Linux agent monitoring PAUSED")
+                
+                # Pause all collectors
+                for name, collector in self.collectors.items():
+                    try:
+                        if hasattr(collector, 'pause'):
+                            await collector.pause()
+                        self.logger.debug(f"⏸️ Paused {name} collector")
+                    except Exception as e:
+                        self.logger.error(f"❌ Failed to pause {name} collector: {e}")
+                
+                # Send pause status
+                if self.is_registered:
+                    try:
+                        await self._send_heartbeat(status='Paused')
+                    except:
+                        pass
+        except Exception as e:
+            self.logger.error(f"❌ Linux agent pause error: {e}")
+    
+    async def resume(self):
+        """Resume Linux agent monitoring"""
+        try:
+            if self.is_paused:
+                self.is_paused = False
+                self.logger.info("▶️ Linux agent monitoring RESUMED")
+                
+                # Resume all collectors
+                for name, collector in self.collectors.items():
+                    try:
+                        if hasattr(collector, 'resume'):
+                            await collector.resume()
+                        self.logger.debug(f"▶️ Resumed {name} collector")
+                    except Exception as e:
+                        self.logger.error(f"❌ Failed to resume {name} collector: {e}")
+                
+                # Send active status
+                if self.is_registered:
+                    try:
+                        await self._send_heartbeat(status='Active')
+                    except:
+                        pass
+        except Exception as e:
+            self.logger.error(f"❌ Linux agent resume error: {e}")
     
     def get_status(self) -> Dict[str, Any]:
         """Get current agent status"""
