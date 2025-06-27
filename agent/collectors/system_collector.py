@@ -69,6 +69,24 @@ class LinuxSystemCollector(LinuxBaseCollector):
         self.collect_performance = True
         self.security_scanning = True
         
+        # ✅ NEW: Event filtering configuration
+        linux_config = self.config.get('linux_specific', {})
+        system_filters = linux_config.get('system_event_filters', {})
+        
+        self.exclude_security_events = system_filters.get('exclude_security_events', False)
+        self.exclude_performance_events = system_filters.get('exclude_performance_events', True)
+        self.exclude_network_events = system_filters.get('exclude_network_events', False)
+        self.exclude_service_events = system_filters.get('exclude_service_events', False)
+        
+        # ✅ NEW: Rate limiting
+        self.security_events_this_minute = 0
+        self.last_security_reset = time.time()
+        self.max_security_events_per_minute = self.config.get('filters', {}).get('max_security_events_per_minute', 2)
+        
+        # ✅ NEW: Event deduplication
+        self.recent_security_events = {}
+        self.security_event_dedup_window = 180  # 3 minutes
+        
         # Monitoring intervals
         self.service_check_interval = 30
         self.performance_check_interval = 60
@@ -80,7 +98,9 @@ class LinuxSystemCollector(LinuxBaseCollector):
             'system_events': 0,
             'performance_events': 0,
             'security_events': 0,
-            'total_system_events': 0
+            'total_system_events': 0,
+            'filtered_security_events': 0,
+            'rate_limited_security_events': 0
         }
         
     async def initialize(self):
@@ -989,3 +1009,66 @@ class LinuxSystemCollector(LinuxBaseCollector):
             'failed_services': len(self.failed_services),
             'suspicious_activities': len(self.suspicious_activities)
         }
+
+    # ✅ NEW: Security event filtering methods
+    
+    def _check_security_rate_limit(self) -> bool:
+        """Check if we're within security event rate limits"""
+        current_time = time.time()
+        
+        # Reset counter every minute
+        if current_time - self.last_security_reset >= 60:
+            self.security_events_this_minute = 0
+            self.last_security_reset = current_time
+        
+        if self.security_events_this_minute >= self.max_security_events_per_minute:
+            self.stats['rate_limited_security_events'] += 1
+            return False
+        
+        return True
+    
+    def _increment_security_event_count(self):
+        """Increment security event count for rate limiting"""
+        self.security_events_this_minute += 1
+    
+    def _is_security_event_worth_sending(self, event_type: str, details: Dict) -> bool:
+        """Check if security event is worth sending (deduplication)"""
+        try:
+            # Create event key for deduplication
+            event_key = f"security_{event_type}_{details.get('service_name', 'unknown')}"
+            current_time = time.time()
+            
+            # Check if we've seen this event recently
+            if event_key in self.recent_security_events:
+                last_time = self.recent_security_events[event_key]
+                if current_time - last_time < self.security_event_dedup_window:
+                    self.stats['filtered_security_events'] += 1
+                    return False
+            
+            # Update recent events
+            self.recent_security_events[event_key] = current_time
+            
+            # Clean old entries
+            cutoff_time = current_time - self.security_event_dedup_window
+            self.recent_security_events = {
+                key: timestamp for key, timestamp in self.recent_security_events.items()
+                if timestamp > cutoff_time
+            }
+            
+            return True
+            
+        except Exception:
+            return True  # Send on error
+    
+    def _should_filter_event_type(self, event_type: str) -> bool:
+        """Check if event type should be filtered based on configuration"""
+        if event_type == 'security' and self.exclude_security_events:
+            return True
+        elif event_type == 'performance' and self.exclude_performance_events:
+            return True
+        elif event_type == 'network' and self.exclude_network_events:
+            return True
+        elif event_type == 'service' and self.exclude_service_events:
+            return True
+        
+        return False

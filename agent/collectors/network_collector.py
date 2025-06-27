@@ -27,6 +27,24 @@ class LinuxNetworkCollector(LinuxBaseCollector):
         self.polling_interval = 3.0  # 3 seconds for network monitoring
         self.max_events_per_batch = 20
         
+        # ✅ NEW: Network event filtering configuration
+        linux_config = self.config.get('linux_specific', {})
+        network_filters = linux_config.get('network_event_filters', {})
+        
+        self.exclude_disconnect_events = network_filters.get('exclude_disconnect_events', True)
+        self.exclude_connect_events = network_filters.get('exclude_connect_events', False)
+        self.exclude_listen_events = network_filters.get('exclude_listen_events', False)
+        self.exclude_established_events = network_filters.get('exclude_established_events', True)
+        
+        # ✅ NEW: Rate limiting
+        self.network_events_this_minute = 0
+        self.last_network_reset = time.time()
+        self.max_network_events_per_minute = self.config.get('filters', {}).get('max_network_events_per_minute', 3)
+        
+        # ✅ NEW: Event deduplication
+        self.recent_network_events = {}
+        self.network_event_dedup_window = 180  # 3 minutes
+        
         # Network monitoring paths
         self.proc_net_path = Path('/proc/net')
         self.monitor_tcp = True
@@ -633,3 +651,66 @@ class LinuxNetworkCollector(LinuxBaseCollector):
             'linux_network_monitoring': True
         })
         return base_stats
+    
+    # ✅ NEW: Network event filtering methods
+    
+    def _check_network_rate_limit(self) -> bool:
+        """Check if we're within network event rate limits"""
+        current_time = time.time()
+        
+        # Reset counter every minute
+        if current_time - self.last_network_reset >= 60:
+            self.network_events_this_minute = 0
+            self.last_network_reset = current_time
+        
+        if self.network_events_this_minute >= self.max_network_events_per_minute:
+            return False
+        
+        return True
+    
+    def _increment_network_event_count(self):
+        """Increment network event count for rate limiting"""
+        self.network_events_this_minute += 1
+    
+    def _is_network_event_worth_sending(self, event_type: str, conn_info: Dict) -> bool:
+        """Check if network event is worth sending (deduplication)"""
+        try:
+            # Create event key for deduplication
+            local_addr = conn_info.get('local_address', 'unknown')
+            remote_addr = conn_info.get('remote_address', 'unknown')
+            event_key = f"network_{event_type}_{local_addr}_{remote_addr}"
+            current_time = time.time()
+            
+            # Check if we've seen this event recently
+            if event_key in self.recent_network_events:
+                last_time = self.recent_network_events[event_key]
+                if current_time - last_time < self.network_event_dedup_window:
+                    return False
+            
+            # Update recent events
+            self.recent_network_events[event_key] = current_time
+            
+            # Clean old entries
+            cutoff_time = current_time - self.network_event_dedup_window
+            self.recent_network_events = {
+                key: timestamp for key, timestamp in self.recent_network_events.items()
+                if timestamp > cutoff_time
+            }
+            
+            return True
+            
+        except Exception:
+            return True  # Send on error
+    
+    def _should_filter_network_event_type(self, event_type: str) -> bool:
+        """Check if network event type should be filtered based on configuration"""
+        if event_type == 'disconnect' and self.exclude_disconnect_events:
+            return True
+        elif event_type == 'connect' and self.exclude_connect_events:
+            return True
+        elif event_type == 'listen' and self.exclude_listen_events:
+            return True
+        elif event_type == 'established' and self.exclude_established_events:
+            return True
+        
+        return False

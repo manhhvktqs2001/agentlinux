@@ -21,8 +21,8 @@ agent:
   # ✅ OPTIMIZATION: Significantly increased intervals to reduce load
   process_collection_interval: 45    # Increased from 30 to 45 seconds
   file_collection_interval: 600      # Increased to 10 minutes
-  network_collection_interval: 90    # Increased to 1.5 minutes
-  system_collection_interval: 180    # Increased to 3 minutes
+  network_collection_interval: 180   # Increased from 90 to 180 seconds (3 minutes)
+  system_collection_interval: 300    # Increased from 180 to 300 seconds (5 minutes)
   authentication_collection_interval: 300  # Increased to 5 minutes
   
   # ✅ OPTIMIZATION: Extended monitoring intervals
@@ -79,6 +79,20 @@ linux_specific:
   use_inotify: false             # DISABLED - major spam source
   monitor_systemd: true          # Keep essential service monitoring
   monitor_audit_daemon: false    # DISABLED - can be noisy
+  
+  # ✅ NEW: System event filtering
+  system_event_filters:
+    exclude_security_events: false  # Keep security events but reduce frequency
+    exclude_performance_events: true  # Disable performance events
+    exclude_network_events: false   # Keep network events
+    exclude_service_events: false   # Keep service events
+  
+  # ✅ NEW: Network event filtering
+  network_event_filters:
+    exclude_disconnect_events: true  # Disable disconnect events (major spam source)
+    exclude_connect_events: false    # Keep connect events
+    exclude_listen_events: false     # Keep listen events
+    exclude_established_events: true # Disable established events (spam)
   
   # ✅ OPTIMIZATION: Minimal path monitoring
   paths_to_monitor: []           # Empty - no file monitoring
@@ -175,12 +189,17 @@ filters:
   min_process_lifetime: 10      # Increased from 5 to 10 seconds
   max_file_size_mb: 50         # Reduced from 100 to 50MB
   max_command_line_length: 1024 # Reduced from 2048
-  max_events_per_minute: 15     # Hard limit on events per minute
+  max_events_per_minute: 10     # Reduced from 15 to 10 (strict limit)
+  
+  # ✅ NEW: Event type limits
+  max_security_events_per_minute: 2   # Limit security events
+  max_network_events_per_minute: 3    # Limit network events
+  max_process_events_per_minute: 5    # Limit process events
   
   # ✅ NEW: Smart filtering rules
   ignore_repeated_events: true
-  repeated_event_threshold: 3   # Ignore after 3 identical events
-  repeated_event_window: 300    # Within 5 minutes
+  repeated_event_threshold: 2   # Reduced from 3 to 2 (ignore after 2 identical events)
+  repeated_event_window: 180    # Reduced from 300 to 180 seconds (3 minutes)
 
 # ✅ NEW: Health monitoring configuration
 health_monitoring:
