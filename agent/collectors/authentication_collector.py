@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 
-from agent.collectors.base_collector import BaseCollector
+from agent.collectors.base_collector import LinuxBaseCollector
 from agent.schemas.events import EventData, EventSeverity  # FIXED: Import EventSeverity
 
 @dataclass
@@ -41,7 +41,7 @@ class LoginSession:
     logout_time: Optional[datetime] = None
     duration: Optional[float] = None
 
-class LinuxAuthenticationCollector(BaseCollector):
+class LinuxAuthenticationCollector(LinuxBaseCollector):
     """Linux Authentication Collector - Monitor authentication events"""
     
     def __init__(self, config_manager):
@@ -452,6 +452,7 @@ class LinuxAuthenticationCollector(BaseCollector):
                 event_type="Authentication",
                 event_action=auth_event.event_type,
                 severity=EventSeverity.INFO.value if auth_event.success else EventSeverity.MEDIUM.value,
+                agent_id=self.agent_id,
                 login_user=auth_event.user,
                 login_type=auth_event.event_type,
                 login_result="Success" if auth_event.success else "Failed",
@@ -584,8 +585,15 @@ class LinuxAuthenticationCollector(BaseCollector):
     async def _monitor_wtmp(self):
         """Monitor wtmp file for successful logins"""
         try:
+            # Check if 'last' command is available
+            result = subprocess.run(['which', 'last'], capture_output=True, text=True, timeout=5)
+            if result.returncode != 0:
+                self.logger.debug("⚠️ 'last' command not available - skipping wtmp monitoring")
+                return
+            
             wtmp_path = self.log_files['wtmp']
             if not os.path.exists(wtmp_path):
+                self.logger.debug("⚠️ wtmp file not found - skipping wtmp monitoring")
                 return
             
             # Get recent wtmp entries
@@ -603,6 +611,8 @@ class LinuxAuthenticationCollector(BaseCollector):
                         if login_info:
                             await self._handle_wtmp_login(login_info)
             
+        except FileNotFoundError:
+            self.logger.debug("⚠️ 'last' command not found - skipping wtmp monitoring")
         except Exception as e:
             self.logger.error(f"❌ wtmp monitoring failed: {e}")
     
@@ -636,6 +646,7 @@ class LinuxAuthenticationCollector(BaseCollector):
                 event_type="Authentication",
                 event_action="wtmp_login",
                 severity=EventSeverity.INFO.value,
+                agent_id=self.agent_id,
                 login_user=login_info['user'],
                 login_type="wtmp_login",
                 login_result="Success",
@@ -658,8 +669,15 @@ class LinuxAuthenticationCollector(BaseCollector):
     async def _monitor_btmp(self):
         """Monitor btmp file for failed logins"""
         try:
+            # Check if 'lastb' command is available
+            result = subprocess.run(['which', 'lastb'], capture_output=True, text=True, timeout=5)
+            if result.returncode != 0:
+                self.logger.debug("⚠️ 'lastb' command not available - skipping btmp monitoring")
+                return
+            
             btmp_path = self.log_files['btmp']
             if not os.path.exists(btmp_path):
+                self.logger.debug("⚠️ btmp file not found - skipping btmp monitoring")
                 return
             
             # Get recent btmp entries
@@ -677,6 +695,8 @@ class LinuxAuthenticationCollector(BaseCollector):
                         if failed_info:
                             await self._handle_btmp_failed(failed_info)
             
+        except FileNotFoundError:
+            self.logger.debug("⚠️ 'lastb' command not found - skipping btmp monitoring")
         except Exception as e:
             self.logger.error(f"❌ btmp monitoring failed: {e}")
     
@@ -710,6 +730,7 @@ class LinuxAuthenticationCollector(BaseCollector):
                 event_type="Authentication",
                 event_action="btmp_failed",
                 severity=EventSeverity.MEDIUM.value,
+                agent_id=self.agent_id,
                 login_user=failed_info['user'],
                 login_type="btmp_failed",
                 login_result="Failed",
@@ -909,6 +930,7 @@ class LinuxAuthenticationCollector(BaseCollector):
                 event_type="Authentication",
                 event_action=event_type,
                 severity=severity.value,
+                agent_id=self.agent_id,
                 description=f"Security event: {event_type}",
                 raw_event_data={
                     'security_event_type': event_type,
@@ -935,3 +957,7 @@ class LinuxAuthenticationCollector(BaseCollector):
             'suspicious_logins': len(self.suspicious_logins),
             'platform': 'linux'
         }
+
+    async def _collect_data(self):
+        """Implement abstract method to fix instantiation error."""
+        await self.collect_data()

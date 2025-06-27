@@ -385,7 +385,7 @@ class LinuxNetworkCollector(LinuxBaseCollector):
             }
             return EventData(
                 event_type="Network",
-                event_action=EventAction.CONNECT,
+                event_action="Connect",
                 event_timestamp=datetime.now(),
                 severity="Medium" if conn_info.get('is_suspicious') else "Info",
                 agent_id=self.agent_id,
@@ -437,15 +437,15 @@ class LinuxNetworkCollector(LinuxBaseCollector):
             
             return EventData(
                 event_type="Network",
-                event_action=EventAction.DISCONNECT,
+                event_action="Disconnect",
                 event_timestamp=datetime.now(),
                 severity="Info",
-                
+                agent_id=self.agent_id,
                 source_ip=source_ip,
                 source_port=source_port,
                 destination_ip=destination_ip,
                 destination_port=destination_port,
-                protocol='TCP',  # Assume TCP for closed connections
+                protocol='TCP',
                 direction=direction,
                 
                 description=f"🐧 LINUX CONNECTION CLOSED: {source_ip}:{source_port} -> {destination_ip}:{destination_port}",
@@ -466,10 +466,10 @@ class LinuxNetworkCollector(LinuxBaseCollector):
         try:
             return EventData(
                 event_type="Network",
-                event_action=EventAction.SUSPICIOUS_ACTIVITY,
+                event_action="Suspicious",
                 event_timestamp=datetime.now(),
                 severity="High",
-                
+                agent_id=self.agent_id,
                 source_ip=conn.laddr.ip if conn.laddr else "0.0.0.0",
                 source_port=conn.laddr.port if conn.laddr else 0,
                 destination_ip=conn.raddr.ip if conn.raddr else "0.0.0.0",
@@ -500,10 +500,10 @@ class LinuxNetworkCollector(LinuxBaseCollector):
         try:
             return EventData(
                 event_type="Network",
-                event_action=EventAction.CONNECT,
+                event_action="Connect",
                 event_timestamp=datetime.now(),
                 severity="Info",
-                
+                agent_id=self.agent_id,
                 source_ip=conn.laddr.ip if conn.laddr else "0.0.0.0",
                 source_port=conn.laddr.port if conn.laddr else 0,
                 destination_ip=conn.raddr.ip if conn.raddr else "0.0.0.0",
@@ -534,10 +534,10 @@ class LinuxNetworkCollector(LinuxBaseCollector):
         try:
             return EventData(
                 event_type="Network",
-                event_action=EventAction.ACCESS,
+                event_action="Access",
                 event_timestamp=datetime.now(),
                 severity="Medium" if conn.laddr.port in self.suspicious_ports else "Info",
-                
+                agent_id=self.agent_id,
                 source_ip=conn.laddr.ip if conn.laddr else "0.0.0.0",
                 source_port=conn.laddr.port if conn.laddr else 0,
                 destination_ip="0.0.0.0",
@@ -589,17 +589,16 @@ class LinuxNetworkCollector(LinuxBaseCollector):
             
             return EventData(
                 event_type="Network",
-                event_action=EventAction.RESOURCE_USAGE,
+                event_action="Resource_Usage",
                 event_timestamp=datetime.now(),
                 severity="Info",
-                
+                agent_id=self.agent_id,
                 source_ip="0.0.0.0",
                 source_port=0,
                 destination_ip="0.0.0.0",
                 destination_port=0,
                 protocol="Summary",
                 direction="Summary",
-                
                 description=f"🐧 LINUX NETWORK SUMMARY: {active_connections} active connections",
                 raw_event_data={
                     'platform': 'linux',
@@ -658,17 +657,16 @@ class LinuxNetworkCollector(LinuxBaseCollector):
             
             event = EventData(
                 event_type="Network",
-                event_action=EventAction.RESOURCE_USAGE,
+                event_action="Resource_Usage",
                 event_timestamp=datetime.now(),
                 severity="Medium",
-                
+                agent_id=self.agent_id,
                 source_ip="0.0.0.0",
                 source_port=0,
                 destination_ip="0.0.0.0",
                 destination_port=0,
                 protocol="Bandwidth",
                 direction="Both",
-                
                 description=f"🐧 LINUX HIGH BANDWIDTH: Send {send_mb:.1f}MB/s, Recv {recv_mb:.1f}MB/s",
                 raw_event_data={
                     'platform': 'linux',

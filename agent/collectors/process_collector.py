@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Set
 from collections import defaultdict
 
 from agent.collectors.base_collector import LinuxBaseCollector
-from agent.schemas.events import EventData, EventAction
+from agent.schemas.events import EventData
 
 class LinuxProcessCollector(LinuxBaseCollector):
     """Linux Process Collector with /proc filesystem monitoring"""
@@ -359,7 +359,7 @@ class LinuxProcessCollector(LinuxBaseCollector):
             }
             return EventData(
                 event_type="Process",
-                event_action=EventAction.START,
+                event_action="Start",
                 event_timestamp=datetime.now(),
                 severity=severity,
                 agent_id=self.agent_id,
@@ -380,23 +380,19 @@ class LinuxProcessCollector(LinuxBaseCollector):
         """Create process termination event"""
         try:
             process_name = proc_info.get('name', 'Unknown')
-            
-            # Calculate process lifetime
             create_time = proc_info.get('create_time', 0)
             last_seen = proc_info.get('last_seen', time.time())
             lifetime = last_seen - create_time if create_time > 0 else 0
-            
             return EventData(
                 event_type="Process",
-                event_action=EventAction.STOP,
+                event_action="Stop",
                 event_timestamp=datetime.now(),
                 severity="Info",
-                
+                agent_id=self.agent_id,
                 process_id=pid,
                 process_name=process_name,
                 process_path=proc_info.get('exe'),
                 process_user=proc_info.get('username'),
-                
                 description=f"🐧 LINUX PROCESS ENDED: {process_name} (PID: {pid}, ran {lifetime:.1f}s)",
                 raw_event_data={
                     'platform': 'linux',
@@ -417,19 +413,17 @@ class LinuxProcessCollector(LinuxBaseCollector):
         try:
             process_name = proc_info.get('name', 'Unknown')
             category = self._get_process_category(process_name)
-            
             return EventData(
                 event_type="Process",
-                event_action=EventAction.ACCESS,
+                event_action="Access",
                 event_timestamp=datetime.now(),
                 severity="Medium" if category in ['system_tools', 'security'] else "Info",
-                
+                agent_id=self.agent_id,
                 process_id=proc_info.get('pid'),
                 process_name=process_name,
                 process_path=proc_info.get('exe'),
                 command_line=proc_info.get('cmdline_string', ''),
                 process_user=proc_info.get('username'),
-                
                 description=f"🐧 LINUX INTERESTING PROCESS: {process_name} ({category})",
                 raw_event_data={
                     'platform': 'linux',
@@ -451,15 +445,13 @@ class LinuxProcessCollector(LinuxBaseCollector):
         try:
             return EventData(
                 event_type="Process",
-                event_action=EventAction.RESOURCE_USAGE,
+                event_action="Resource_Usage",
                 event_timestamp=datetime.now(),
                 severity="High" if cpu_percent > 90 else "Medium",
-                
+                agent_id=self.agent_id,
                 process_id=proc_info.get('pid'),
                 process_name=proc_info.get('name'),
-                cpu_usage=cpu_percent,
                 process_user=proc_info.get('username'),
-                
                 description=f"🐧 LINUX HIGH CPU: {proc_info.get('name')} using {cpu_percent:.1f}% CPU",
                 raw_event_data={
                     'platform': 'linux',
@@ -480,18 +472,15 @@ class LinuxProcessCollector(LinuxBaseCollector):
         """Create high memory usage event"""
         try:
             memory_mb = memory_rss / (1024 * 1024)
-            
             return EventData(
                 event_type="Process",
-                event_action=EventAction.RESOURCE_USAGE,
+                event_action="Resource_Usage",
                 event_timestamp=datetime.now(),
                 severity="High" if memory_mb > 1000 else "Medium",
-                
+                agent_id=self.agent_id,
                 process_id=proc_info.get('pid'),
                 process_name=proc_info.get('name'),
-                memory_usage=memory_mb,
                 process_user=proc_info.get('username'),
-                
                 description=f"🐧 LINUX HIGH MEMORY: {proc_info.get('name')} using {memory_mb:.1f}MB",
                 raw_event_data={
                     'platform': 'linux',

@@ -371,7 +371,7 @@ class AgentHeartbeatData:
                 'MemoryUsage': self.memory_usage,
                 'DiskUsage': self.disk_usage,
                 'NetworkLatency': self.network_latency,
-                
+                'hostname': self.hostname,  # Always include hostname for server validation
                 # ADDITIONAL LINUX METRICS
                 'Platform': 'linux',
                 'Uptime': self.uptime,
@@ -391,10 +391,8 @@ class AgentHeartbeatData:
                 'Timestamp': self.timestamp,
                 'Metadata': self.metadata
             }
-            
             # Remove None values
             return {k: v for k, v in data.items() if v is not None}
-            
         except Exception as e:
             return {
                 'error': str(e), 

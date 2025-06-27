@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 
-from agent.collectors.base_collector import BaseCollector
+from agent.collectors.base_collector import LinuxBaseCollector
 from agent.schemas.events import EventData, EventSeverity
 
 @dataclass
@@ -41,11 +41,11 @@ class SystemEvent:
     source: str
     details: Dict[str, Any]
 
-class LinuxSystemCollector(BaseCollector):
+class LinuxSystemCollector(LinuxBaseCollector):
     """Linux System Collector - Monitor system events and services"""
     
     def __init__(self, config_manager):
-        super().__init__(config_manager, "system")
+        super().__init__(config_manager, "LinuxSystemCollector")
         self.logger = logging.getLogger(__name__)
         
         # System monitoring
@@ -73,6 +73,15 @@ class LinuxSystemCollector(BaseCollector):
         self.service_check_interval = 30
         self.performance_check_interval = 60
         self.security_check_interval = 120
+        
+        # Statistics
+        self.stats = {
+            'service_events': 0,
+            'system_events': 0,
+            'performance_events': 0,
+            'security_events': 0,
+            'total_system_events': 0
+        }
         
     async def initialize(self):
         """Initialize system collector"""
@@ -210,34 +219,45 @@ class LinuxSystemCollector(BaseCollector):
         except Exception as e:
             self.logger.error(f"❌ Security monitoring setup failed: {e}")
     
-    async def collect_data(self):
-        """Collect system data"""
+    async def _collect_data(self):
+        """✅ FIXED: Implement abstract method for Linux system data collection"""
         try:
             if not self.is_running:
-                return
+                return []
+            
+            events = []
             
             # Monitor services
             if self.monitor_services and self.systemd_available:
-                await self._monitor_services()
+                service_events = await self._monitor_services()
+                events.extend(service_events)
             
             # Monitor system events
             if self.monitor_system_events:
-                await self._monitor_system_events()
+                system_events = await self._monitor_system_events()
+                events.extend(system_events)
             
             # Collect performance data
             if self.collect_performance and time.time() - self.last_performance_check > self.performance_check_interval:
-                await self._collect_performance_data()
+                performance_events = await self._collect_performance_data()
+                events.extend(performance_events)
                 self.last_performance_check = time.time()
             
             # Security scanning
             if self.security_scanning and time.time() % self.security_check_interval < 5:
-                await self._perform_security_scan()
+                security_events = await self._perform_security_scan()
+                events.extend(security_events)
+            
+            self.stats['total_system_events'] += len(events)
+            return events
             
         except Exception as e:
             self.logger.error(f"❌ System data collection failed: {e}")
+            return []
     
     async def _monitor_services(self):
-        """Monitor systemd services"""
+        """Monitor systemd services and return events"""
+        events = []
         try:
             current_services = await self._get_systemd_services()
             current_service_names = {s.name for s in current_services}
@@ -246,18 +266,33 @@ class LinuxSystemCollector(BaseCollector):
             for service in current_services:
                 if service.name not in self.services_tracked:
                     await self._handle_new_service(service)
+                    event = await self._create_service_event(service, "service_started")
+                    if event:
+                        events.append(event)
+                        self.stats['service_events'] += 1
                 else:
+                    # Update existing service
                     await self._update_service_info(service)
             
-            # Check for stopped/removed services
-            known_names = set(self.services_tracked.keys())
-            removed_names = known_names - current_service_names
+            # Check for removed services
+            tracked_names = set(self.services_tracked.keys())
+            removed_services = tracked_names - current_service_names
             
-            for service_name in removed_names:
+            for service_name in removed_services:
                 await self._handle_removed_service(service_name)
+                event = await self._create_service_event(
+                    SystemService(name=service_name, status="stopped", type="unknown", description="Service stopped"),
+                    "service_stopped"
+                )
+                if event:
+                    events.append(event)
+                    self.stats['service_events'] += 1
+            
+            return events
             
         except Exception as e:
             self.logger.error(f"❌ Service monitoring failed: {e}")
+            return events
     
     async def _get_systemd_services(self) -> List[SystemService]:
         """Get systemd services"""
@@ -431,46 +466,28 @@ class LinuxSystemCollector(BaseCollector):
             self.logger.error(f"❌ Service removal handling failed: {e}")
     
     async def _monitor_system_events(self):
-        """Monitor system events using journalctl"""
+        """Monitor system events and return events"""
+        events = []
         try:
-            # Get recent system events
-            events = await self._get_system_events()
+            system_events = await self._get_system_events()
             
-            for event in events:
-                # Check for security-relevant events
+            for event in system_events:
                 if self._is_security_event(event):
-                    await self._report_security_event(
-                        service_name="system",
-                        event_type="security_event",
-                        severity=EventSeverity.MEDIUM,
-                        details={
-                            'event_type': event.event_type,
-                            'message': event.message,
-                            'source': event.source,
-                            'timestamp': event.timestamp.isoformat()
-                        }
-                    )
-                
-                # Create general event
-                event_data = EventData(
-                    event_type="System",
-                    event_action="System_Event",
-                    severity=EventSeverity.INFO.value,
-                    agent_id=self.agent_id,
-                    description=f"System event: {event.event_type}",
-                    raw_event_data={
-                        'event_type': event.event_type,
-                        'message': event.message,
-                        'source': event.source,
-                        'timestamp': event.timestamp.isoformat(),
-                        'details': event.details
-                    }
-                )
-                
-                await self._send_event_immediately(event_data)
-        
+                    security_event = await self._create_security_event(event)
+                    if security_event:
+                        events.append(security_event)
+                        self.stats['security_events'] += 1
+                else:
+                    system_event = await self._create_system_event(event)
+                    if system_event:
+                        events.append(system_event)
+                        self.stats['system_events'] += 1
+            
+            return events
+            
         except Exception as e:
             self.logger.error(f"❌ System event monitoring failed: {e}")
+            return events
     
     async def _get_system_events(self) -> List[SystemEvent]:
         """Get recent system events from journalctl"""
@@ -532,30 +549,26 @@ class LinuxSystemCollector(BaseCollector):
         return any(keyword in message_lower for keyword in security_keywords)
     
     async def _collect_performance_data(self):
-        """Collect system performance data"""
+        """Collect performance data and return events"""
+        events = []
         try:
             new_performance = await self._get_system_performance()
             
-            # Check for significant changes
             if self.performance_data:
                 changes = self._detect_performance_changes(self.performance_data, new_performance)
                 
                 for change in changes:
-                    event_data = EventData(
-                        event_type="System",
-                        event_action="Resource_Usage",
-                        severity=EventSeverity.INFO.value,
-                        agent_id=self.agent_id,
-                        description=f"Performance change: {change.get('type', 'Unknown')}",
-                        raw_event_data=change
-                    )
-                    
-                    await self._send_event_immediately(event_data)
+                    performance_event = await self._create_performance_event(change)
+                    if performance_event:
+                        events.append(performance_event)
+                        self.stats['performance_events'] += 1
             
             self.performance_data = new_performance
+            return events
             
         except Exception as e:
             self.logger.error(f"❌ Performance data collection failed: {e}")
+            return events
     
     async def _get_system_performance(self) -> Dict[str, Any]:
         """Get system performance data"""
@@ -691,35 +704,32 @@ class LinuxSystemCollector(BaseCollector):
         return changes
     
     async def _perform_security_scan(self):
-        """Perform security scanning"""
+        """Perform security scan and return events"""
+        events = []
         try:
             # Check for failed services
             failed_services = await self._find_failed_services()
             
             for service in failed_services:
-                await self._report_security_event(
-                    service_name=service.name,
-                    event_type="service_failure",
-                    severity=EventSeverity.MEDIUM,
-                    details={
-                        'service_name': service.name,
-                        'description': service.description
-                    }
-                )
+                security_event = await self._create_security_event_from_service(service)
+                if security_event:
+                    events.append(security_event)
+                    self.stats['security_events'] += 1
             
             # Check for suspicious activities
             suspicious_activities = await self._find_suspicious_activities()
             
             for activity in suspicious_activities:
-                await self._report_security_event(
-                    service_name="system",
-                    event_type="suspicious_activity",
-                    severity=EventSeverity.MEDIUM,
-                    details=activity
-                )
-        
+                security_event = await self._create_security_event_from_activity(activity)
+                if security_event:
+                    events.append(security_event)
+                    self.stats['security_events'] += 1
+            
+            return events
+            
         except Exception as e:
-            self.logger.error(f"❌ Security scanning failed: {e}")
+            self.logger.error(f"❌ Security scan failed: {e}")
+            return events
     
     async def _find_failed_services(self) -> List[SystemService]:
         """Find failed services"""
@@ -820,6 +830,153 @@ class LinuxSystemCollector(BaseCollector):
         except Exception as e:
             self.logger.error(f"❌ Security event reporting failed: {e}")
     
+    async def _create_service_event(self, service: SystemService, event_type: str) -> Optional[EventData]:
+        """Create service event with proper agent_id"""
+        try:
+            severity = "Medium" if event_type in ["service_stopped", "service_failed"] else "Info"
+            
+            return EventData(
+                event_type="System",
+                event_action=event_type.upper(),
+                event_timestamp=datetime.now(),
+                severity=severity,
+                agent_id=self.agent_id,
+                description=f"🐧 LINUX SERVICE {event_type.upper()}: {service.name} ({service.status})",
+                raw_event_data={
+                    'platform': 'linux',
+                    'event_subtype': 'service_monitoring',
+                    'service_name': service.name,
+                    'service_status': service.status,
+                    'service_type': service.type,
+                    'service_description': service.description,
+                    'service_pid': service.pid,
+                    'service_user': service.user,
+                    'monitoring_method': 'systemd_service_tracking'
+                }
+            )
+        except Exception as e:
+            self.logger.error(f"❌ Service event creation failed: {e}")
+            return None
+
+    async def _create_system_event(self, event: SystemEvent) -> Optional[EventData]:
+        """Create system event with proper agent_id"""
+        try:
+            return EventData(
+                event_type="System",
+                event_action="SYSTEM_EVENT",
+                event_timestamp=event.timestamp,
+                severity=event.severity.upper(),
+                agent_id=self.agent_id,
+                description=f"🐧 LINUX SYSTEM EVENT: {event.message}",
+                raw_event_data={
+                    'platform': 'linux',
+                    'event_subtype': 'system_event',
+                    'event_source': event.source,
+                    'event_message': event.message,
+                    'event_details': event.details,
+                    'monitoring_method': 'journalctl_system_events'
+                }
+            )
+        except Exception as e:
+            self.logger.error(f"❌ System event creation failed: {e}")
+            return None
+
+    async def _create_security_event(self, event: SystemEvent) -> Optional[EventData]:
+        """Create security event with proper agent_id"""
+        try:
+            return EventData(
+                event_type="System",
+                event_action="SECURITY_EVENT",
+                event_timestamp=event.timestamp,
+                severity="High",
+                agent_id=self.agent_id,
+                description=f"🚨 LINUX SECURITY EVENT: {event.message}",
+                raw_event_data={
+                    'platform': 'linux',
+                    'event_subtype': 'security_event',
+                    'event_source': event.source,
+                    'event_message': event.message,
+                    'event_details': event.details,
+                    'security_level': 'high',
+                    'monitoring_method': 'journalctl_security_events'
+                }
+            )
+        except Exception as e:
+            self.logger.error(f"❌ Security event creation failed: {e}")
+            return None
+
+    async def _create_performance_event(self, change: Dict) -> Optional[EventData]:
+        """Create performance event with proper agent_id"""
+        try:
+            return EventData(
+                event_type="System",
+                event_action="PERFORMANCE_CHANGE",
+                event_timestamp=datetime.now(),
+                severity="Medium",
+                agent_id=self.agent_id,
+                description=f"📈 LINUX PERFORMANCE: {change.get('metric', 'Unknown')} changed",
+                raw_event_data={
+                    'platform': 'linux',
+                    'event_subtype': 'performance_monitoring',
+                    'metric': change.get('metric'),
+                    'old_value': change.get('old_value'),
+                    'new_value': change.get('new_value'),
+                    'change_percent': change.get('change_percent'),
+                    'threshold': change.get('threshold'),
+                    'monitoring_method': 'system_performance_tracking'
+                }
+            )
+        except Exception as e:
+            self.logger.error(f"❌ Performance event creation failed: {e}")
+            return None
+
+    async def _create_security_event_from_service(self, service: SystemService) -> Optional[EventData]:
+        """Create security event from failed service"""
+        try:
+            return EventData(
+                event_type="System",
+                event_action="SECURITY_EVENT",
+                event_timestamp=datetime.now(),
+                severity="Medium",
+                agent_id=self.agent_id,
+                description=f"🚨 LINUX FAILED SERVICE: {service.name}",
+                raw_event_data={
+                    'platform': 'linux',
+                    'event_subtype': 'failed_service',
+                    'service_name': service.name,
+                    'service_status': service.status,
+                    'service_description': service.description,
+                    'security_level': 'medium',
+                    'monitoring_method': 'systemd_service_monitoring'
+                }
+            )
+        except Exception as e:
+            self.logger.error(f"❌ Security event creation failed: {e}")
+            return None
+
+    async def _create_security_event_from_activity(self, activity: Dict) -> Optional[EventData]:
+        """Create security event from suspicious activity"""
+        try:
+            return EventData(
+                event_type="System",
+                event_action="SECURITY_EVENT",
+                event_timestamp=datetime.now(),
+                severity="Medium",
+                agent_id=self.agent_id,
+                description=f"🚨 LINUX SUSPICIOUS ACTIVITY: {activity.get('type', 'Unknown')}",
+                raw_event_data={
+                    'platform': 'linux',
+                    'event_subtype': 'suspicious_activity',
+                    'activity_type': activity.get('type'),
+                    'activity_details': activity.get('details'),
+                    'security_level': 'medium',
+                    'monitoring_method': 'system_security_scanning'
+                }
+            )
+        except Exception as e:
+            self.logger.error(f"❌ Security event creation failed: {e}")
+            return None
+
     def get_status(self) -> Dict[str, Any]:
         """Get collector status"""
         return {

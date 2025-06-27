@@ -480,10 +480,13 @@ class EnhancedContainerSecurityCollector(BaseCollector):
         """Report container security event"""
         try:
             event_data = EventData(
-                event_type=EventType.CONTAINER_SECURITY,
+                event_type="Container_Security",
+                event_action="Security_Event",
+                event_timestamp=datetime.now(),
                 severity=severity,
-                source="container_security_collector",
-                data={
+                agent_id=self.agent_id,
+                description=f"🐧 LINUX CONTAINER SECURITY: {security_issue}",
+                raw_event_data={
                     'container_id': container_id,
                     'container_name': container_name,
                     'image': image,
@@ -503,10 +506,13 @@ class EnhancedContainerSecurityCollector(BaseCollector):
         """Report container escape attempt"""
         try:
             event_data = EventData(
-                event_type=EventType.CONTAINER_SECURITY,
+                event_type="Container_Security",
+                event_action="Escape_Attempt",
+                event_timestamp=datetime.now(),
                 severity='CRITICAL',
-                source="container_security_collector",
-                data={
+                agent_id=self.agent_id,
+                description=f"🐧 LINUX CONTAINER ESCAPE ATTEMPT: {command}",
+                raw_event_data={
                     'container_id': container.id,
                     'container_name': container.name,
                     'security_issue': 'container_escape_attempt',

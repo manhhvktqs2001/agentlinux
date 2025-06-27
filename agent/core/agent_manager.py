@@ -1,7 +1,7 @@
 # agent/core/agent_manager.py - FIXED Linux Agent Manager
 """
 Linux Agent Manager - FIXED VERSION
-Main orchestrator for Linux EDR agent with proper imports
+Main orchestrator for Linux EDR agent with ALL MISSING ATTRIBUTES
 """
 
 import asyncio
@@ -16,18 +16,34 @@ from datetime import datetime
 from typing import Optional, Dict, List, Any
 from pathlib import Path
 
-from agent.core.communication import ServerCommunication  # FIXED IMPORT
+from agent.core.communication import ServerCommunication
 from agent.core.config_manager import ConfigManager
-from agent.core.event_processor import EventProcessor  # FIXED IMPORT
+from agent.core.event_processor import EventProcessor
 from agent.schemas.agent_data import AgentRegistrationData, AgentHeartbeatData
+from agent.collectors.process_collector import LinuxProcessCollector
+from agent.collectors.file_collector import LinuxFileCollector
+from agent.collectors.network_collector import LinuxNetworkCollector
+from agent.collectors.authentication_collector import LinuxAuthenticationCollector
+from agent.collectors.system_collector import LinuxSystemCollector
 
 class LinuxAgentManager:
-    """✅ FIXED: Linux Agent Manager with proper agent_id handling"""
+    """✅ FIXED: Linux Agent Manager with ALL required attributes"""
     
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
         self.config = config_manager.get_config()
         self.logger = logging.getLogger(__name__)
+        
+        # ✅ FIXED: Add ALL missing attributes
+        self.requires_root = True  # CRITICAL FIX
+        self.has_root_privileges = self._check_root_privileges()
+        self.is_initialized = False
+        self.is_running = False
+        self.is_monitoring = False
+        self.is_paused = False
+        self.is_registered = False
+        self.start_time = None
+        self.last_heartbeat = None
         
         # ✅ FIXED: Agent identification with guaranteed agent_id
         self.agent_id_file = os.path.join(os.path.dirname(__file__), '..', '..', '.agent_id')
@@ -38,7 +54,6 @@ class LinuxAgentManager:
             self.agent_id = str(uuid.uuid4())
             self._save_agent_id(self.agent_id)
         
-        self.is_registered = False
         self.system_info = self._get_linux_system_info()
         
         # Core components
@@ -47,6 +62,16 @@ class LinuxAgentManager:
         self.collectors = {}
         
         self.logger.info(f"🐧 Linux Agent Manager initialized with ID: {self.agent_id[:8]}...")
+        self.logger.info(f"🔐 Root privileges: {self.has_root_privileges}")
+        self.logger.info(f"⚙️ Requires root: {self.requires_root}")
+    
+    def _check_root_privileges(self) -> bool:
+        """✅ FIXED: Check if running with root privileges"""
+        try:
+            return os.geteuid() == 0
+        except Exception as e:
+            self.logger.error(f"❌ Error checking root privileges: {e}")
+            return False
     
     def _load_or_create_agent_id(self) -> str:
         """✅ FIXED: Guaranteed agent_id creation"""
@@ -79,7 +104,7 @@ class LinuxAgentManager:
             self.logger.error(f"Could not save agent ID: {e}")
     
     def _get_linux_system_info(self) -> Dict[str, str]:
-        """Get Linux system information"""
+        """Get Linux system information from actual system"""
         try:
             info = {
                 'hostname': platform.node(),
@@ -87,7 +112,8 @@ class LinuxAgentManager:
                 'architecture': platform.machine(),
                 'distribution': 'Unknown',
                 'version': 'Unknown',
-                'platform': 'linux'
+                'platform': 'linux',
+                'is_root': self.has_root_privileges
             }
             
             # Get distribution info from /etc/os-release
@@ -105,17 +131,53 @@ class LinuxAgentManager:
             except Exception as e:
                 self.logger.debug(f"Could not read /etc/os-release: {e}")
             
-            # Get additional system info
+            # Get additional system info from actual system
             try:
                 info['uptime'] = time.time() - psutil.boot_time()
                 info['cpu_count'] = psutil.cpu_count()
+                info['cpu_count_logical'] = psutil.cpu_count(logical=True)
                 
                 memory = psutil.virtual_memory()
                 info['total_memory'] = memory.total
+                info['available_memory'] = memory.available
+                info['memory_percent'] = memory.percent
                 
-                # Get current user
+                # Get current user from actual system
                 info['current_user'] = pwd.getpwuid(os.getuid()).pw_name
                 info['effective_user'] = pwd.getpwuid(os.geteuid()).pw_name
+                
+                # Get system load average
+                try:
+                    load_avg = os.getloadavg()
+                    info['load_average_1min'] = load_avg[0]
+                    info['load_average_5min'] = load_avg[1]
+                    info['load_average_15min'] = load_avg[2]
+                except:
+                    pass
+                
+                # Get disk usage
+                try:
+                    disk = psutil.disk_usage('/')
+                    info['disk_total'] = disk.total
+                    info['disk_used'] = disk.used
+                    info['disk_free'] = disk.free
+                    info['disk_percent'] = disk.percent
+                except:
+                    pass
+                
+                # Get network interfaces
+                try:
+                    net_if_addrs = psutil.net_if_addrs()
+                    info['network_interfaces'] = list(net_if_addrs.keys())
+                except:
+                    pass
+                
+                # Get system timezone
+                try:
+                    import time
+                    info['timezone'] = time.tzname[time.daylight]
+                except:
+                    pass
                 
             except Exception as e:
                 self.logger.debug(f"Error getting additional system info: {e}")
@@ -124,7 +186,7 @@ class LinuxAgentManager:
             
         except Exception as e:
             self.logger.error(f"❌ Error getting Linux system info: {e}")
-            return {'error': str(e), 'platform': 'linux'}
+            return {'error': str(e), 'platform': 'linux', 'is_root': self.has_root_privileges}
     
     async def initialize(self):
         """Initialize Linux Agent Manager and all components"""
@@ -140,6 +202,20 @@ class LinuxAgentManager:
                 self.communication = ServerCommunication(self.config_manager)
                 await self.communication.initialize()
                 self.logger.info("✅ Server Communication initialized")
+                
+                # Test server connection
+                self.logger.info("🔍 Testing server connectivity...")
+                if await self.communication.test_server_connection():
+                    self.logger.info("✅ Server connection test passed")
+                    
+                    # Test batch endpoint
+                    if await self.communication.test_batch_endpoint():
+                        self.logger.info("✅ Batch endpoint test passed")
+                    else:
+                        self.logger.warning("⚠️ Batch endpoint test failed - will use individual submissions")
+                else:
+                    self.logger.error("❌ Server connection test failed")
+                    
             except Exception as e:
                 self.logger.error(f"❌ Communication initialization failed: {e}")
                 raise Exception(f"Communication failed: {e}")
@@ -164,11 +240,101 @@ class LinuxAgentManager:
             # Initialize Collectors
             try:
                 self.logger.info("📊 Initializing Collectors...")
-                await self._initialize_collectors()
-                self.logger.info("✅ Collectors initialized")
+                
+                # Debug config values
+                agent_config = self.config.get('agent', {})
+                self.logger.info(f"🔍 Config debug - agent section: {agent_config}")
+                
+                enable_process = agent_config.get('enable_process_collector', True)
+                enable_file = agent_config.get('enable_file_collector', True)
+                enable_network = agent_config.get('enable_network_collector', True)
+                enable_auth = agent_config.get('enable_authentication_collector', True)
+                enable_system = agent_config.get('enable_system_collector', True)
+                
+                self.logger.info(f"🔍 Collector enable flags:")
+                self.logger.info(f"   Process: {enable_process}")
+                self.logger.info(f"   File: {enable_file}")
+                self.logger.info(f"   Network: {enable_network}")
+                self.logger.info(f"   Auth: {enable_auth}")
+                self.logger.info(f"   System: {enable_system}")
+                
+                # Process collector
+                if enable_process:
+                    self.logger.info("📊 Initializing process collector...")
+                    self.process_collector = LinuxProcessCollector(self.config_manager)
+                    self.process_collector.set_agent_id(self.agent_id)
+                    self.process_collector.set_event_processor(self.event_processor)
+                    await self.process_collector.initialize()
+                    self.logger.info("✅ process collector initialized")
+                else:
+                    self.logger.info("⏭️ Process collector disabled in config")
+                    self.process_collector = None
+                
+                # File collector
+                if enable_file:
+                    self.logger.info("📊 Initializing file collector...")
+                    self.file_collector = LinuxFileCollector(self.config_manager)
+                    self.file_collector.set_agent_id(self.agent_id)
+                    self.file_collector.set_event_processor(self.event_processor)
+                    await self.file_collector.initialize()
+                    self.logger.info("✅ file collector initialized")
+                else:
+                    self.logger.info("⏭️ File collector disabled in config")
+                    self.file_collector = None
+                
+                # Network collector
+                if enable_network:
+                    self.logger.info("📊 Initializing network collector...")
+                    self.network_collector = LinuxNetworkCollector(self.config_manager)
+                    self.network_collector.set_agent_id(self.agent_id)
+                    self.network_collector.set_event_processor(self.event_processor)
+                    await self.network_collector.initialize()
+                    self.logger.info("✅ network collector initialized")
+                else:
+                    self.logger.info("⏭️ Network collector disabled in config")
+                    self.network_collector = None
+                
+                # Authentication collector
+                if enable_auth:
+                    self.logger.info("📊 Initializing authentication collector...")
+                    self.authentication_collector = LinuxAuthenticationCollector(self.config_manager)
+                    self.authentication_collector.set_agent_id(self.agent_id)
+                    self.authentication_collector.set_event_processor(self.event_processor)
+                    await self.authentication_collector.initialize()
+                    self.logger.info("✅ authentication collector initialized")
+                else:
+                    self.logger.info("⏭️ Authentication collector disabled in config")
+                    self.authentication_collector = None
+                
+                # System collector
+                if enable_system:
+                    self.logger.info("📊 Initializing system collector...")
+                    self.system_collector = LinuxSystemCollector(self.config_manager)
+                    self.system_collector.set_agent_id(self.agent_id)
+                    self.system_collector.set_event_processor(self.event_processor)
+                    await self.system_collector.initialize()
+                    self.logger.info("✅ system collector initialized")
+                else:
+                    self.logger.info("⏭️ System collector disabled in config")
+                    self.system_collector = None
+                
+                # Add enabled collectors to dict
+                if self.process_collector:
+                    self.collectors['process'] = self.process_collector
+                if self.file_collector:
+                    self.collectors['file'] = self.file_collector
+                if self.network_collector:
+                    self.collectors['network'] = self.network_collector
+                if self.authentication_collector:
+                    self.collectors['authentication'] = self.authentication_collector
+                if self.system_collector:
+                    self.collectors['system'] = self.system_collector
+                
+                self.logger.info(f"✅ Initialized {len(self.collectors)} collectors")
+                
             except Exception as e:
                 self.logger.error(f"❌ Collector initialization failed: {e}")
-                raise Exception(f"Collectors failed: {e}")
+                raise
             
             self.is_initialized = True
             self.logger.info("🎉 Linux Agent Manager initialization completed successfully")
@@ -180,7 +346,7 @@ class LinuxAgentManager:
             raise Exception(f"Linux agent manager initialization failed: {e}")
     
     async def _check_system_requirements(self):
-        """Check Linux system requirements"""
+        """✅ FIXED: Check Linux system requirements with proper attribute checking"""
         try:
             self.logger.info("🔍 Checking Linux system requirements...")
             
@@ -190,7 +356,7 @@ class LinuxAgentManager:
             else:
                 self.logger.info(f"✅ Agent ID available: {self.agent_id[:8]}...")
             
-            # Check root privileges for enhanced monitoring
+            # ✅ FIXED: Check root privileges with proper attribute access
             if self.requires_root and not self.has_root_privileges:
                 self.logger.warning("⚠️ Linux agent running without root privileges - monitoring may be limited")
             else:
@@ -220,54 +386,99 @@ class LinuxAgentManager:
             raise
     
     async def _initialize_collectors(self):
-        """Initialize data collectors"""
+        """Initialize data collectors with debug logging"""
         try:
-            from agent.collectors.process_collector import LinuxProcessCollector
-            from agent.collectors.file_collector import LinuxFileCollector
-            from agent.collectors.network_collector import LinuxNetworkCollector
-            from agent.collectors.authentication_collector import LinuxAuthenticationCollector
-            from agent.collectors.system_collector import LinuxSystemCollector
+            # Initialize collectors based on config
+            self.logger.info("📊 Initializing Collectors...")
             
-            # Configure which collectors to enable
-            collection_config = self.config.get('collection', {})
+            # Debug config values
+            agent_config = self.config.get('agent', {})
+            self.logger.info(f"🔍 Config debug - agent section: {agent_config}")
             
-            collectors_to_init = {}
+            enable_process = agent_config.get('enable_process_collector', True)
+            enable_file = agent_config.get('enable_file_collector', True)
+            enable_network = agent_config.get('enable_network_collector', True)
+            enable_auth = agent_config.get('enable_authentication_collector', True)
+            enable_system = agent_config.get('enable_system_collector', True)
             
-            if collection_config.get('collect_processes', True):
-                collectors_to_init['process'] = LinuxProcessCollector
+            self.logger.info(f"🔍 Collector enable flags:")
+            self.logger.info(f"   Process: {enable_process}")
+            self.logger.info(f"   File: {enable_file}")
+            self.logger.info(f"   Network: {enable_network}")
+            self.logger.info(f"   Auth: {enable_auth}")
+            self.logger.info(f"   System: {enable_system}")
             
-            if collection_config.get('collect_files', True):
-                collectors_to_init['file'] = LinuxFileCollector
+            # Process collector
+            if enable_process:
+                self.logger.info("📊 Initializing process collector...")
+                self.process_collector = LinuxProcessCollector(self.config_manager)
+                self.process_collector.set_agent_id(self.agent_id)
+                self.process_collector.set_event_processor(self.event_processor)
+                await self.process_collector.initialize()
+                self.logger.info("✅ process collector initialized")
+            else:
+                self.logger.info("⏭️ Process collector disabled in config")
+                self.process_collector = None
             
-            if collection_config.get('collect_network', True):
-                collectors_to_init['network'] = LinuxNetworkCollector
+            # File collector
+            if enable_file:
+                self.logger.info("📊 Initializing file collector...")
+                self.file_collector = LinuxFileCollector(self.config_manager)
+                self.file_collector.set_agent_id(self.agent_id)
+                self.file_collector.set_event_processor(self.event_processor)
+                await self.file_collector.initialize()
+                self.logger.info("✅ file collector initialized")
+            else:
+                self.logger.info("⏭️ File collector disabled in config")
+                self.file_collector = None
             
-            if collection_config.get('collect_authentication', True):
-                collectors_to_init['authentication'] = LinuxAuthenticationCollector
+            # Network collector
+            if enable_network:
+                self.logger.info("📊 Initializing network collector...")
+                self.network_collector = LinuxNetworkCollector(self.config_manager)
+                self.network_collector.set_agent_id(self.agent_id)
+                self.network_collector.set_event_processor(self.event_processor)
+                await self.network_collector.initialize()
+                self.logger.info("✅ network collector initialized")
+            else:
+                self.logger.info("⏭️ Network collector disabled in config")
+                self.network_collector = None
             
-            if collection_config.get('collect_system_events', True):
-                collectors_to_init['system'] = LinuxSystemCollector
+            # Authentication collector
+            if enable_auth:
+                self.logger.info("📊 Initializing authentication collector...")
+                self.authentication_collector = LinuxAuthenticationCollector(self.config_manager)
+                self.authentication_collector.set_agent_id(self.agent_id)
+                self.authentication_collector.set_event_processor(self.event_processor)
+                await self.authentication_collector.initialize()
+                self.logger.info("✅ authentication collector initialized")
+            else:
+                self.logger.info("⏭️ Authentication collector disabled in config")
+                self.authentication_collector = None
             
-            # Initialize collectors
-            for collector_name, collector_class in collectors_to_init.items():
-                try:
-                    self.logger.info(f"📊 Initializing {collector_name} collector...")
-                    collector = collector_class(self.config_manager)
-                    
-                    # Set event processor and agent_id
-                    collector.set_event_processor(self.event_processor)
-                    if self.agent_id:
-                        collector.set_agent_id(self.agent_id)
-                    
-                    # Initialize collector
-                    await collector.initialize()
-                    
-                    self.collectors[collector_name] = collector
-                    self.logger.info(f"✅ {collector_name} collector initialized")
-                    
-                except Exception as e:
-                    self.logger.error(f"❌ Failed to initialize {collector_name} collector: {e}")
-                    # Continue with other collectors
+            # System collector
+            if enable_system:
+                self.logger.info("📊 Initializing system collector...")
+                self.system_collector = LinuxSystemCollector(self.config_manager)
+                self.system_collector.set_agent_id(self.agent_id)
+                self.system_collector.set_event_processor(self.event_processor)
+                await self.system_collector.initialize()
+                self.logger.info("✅ system collector initialized")
+            else:
+                self.logger.info("⏭️ System collector disabled in config")
+                self.system_collector = None
+            
+            # Add enabled collectors to dict
+            if self.process_collector:
+                self.collectors['process'] = self.process_collector
+            if self.file_collector:
+                self.collectors['file'] = self.file_collector
+            if self.network_collector:
+                self.collectors['network'] = self.network_collector
+            if self.authentication_collector:
+                self.collectors['authentication'] = self.authentication_collector
+            if self.system_collector:
+                self.collectors['system'] = self.system_collector
             
             self.logger.info(f"✅ Initialized {len(self.collectors)} collectors")
             
@@ -280,14 +491,22 @@ class LinuxAgentManager:
         try:
             self.logger.info("🚀 Starting Linux Agent Manager...")
             
-            # Register with server FIRST
-            await self._register_with_server()
+            # ✅ FIXED: Check if already registered before attempting registration
+            if self.is_registered and self.agent_id:
+                self.logger.info(f"✅ Agent already registered with ID: {self.agent_id[:8]}...")
+                self.logger.info(f"   🖥️ Hostname: {self.system_info['hostname']}")
+                self.logger.info(f"   🌐 IP: {self._get_local_ip()}")
+                self.logger.info(f"   🐧 OS: Linux {self.system_info.get('distribution', 'Unknown')}")
+            else:
+                # Register with server FIRST
+                self.logger.info("📡 Agent not registered - attempting registration...")
+                await self._register_with_server()
             
             # Ensure agent_id is available
             if not self.agent_id:
                 raise Exception("Agent registration failed - no agent_id received")
             
-            self.logger.info(f"✅ Agent registered with ID: {self.agent_id}")
+            self.logger.info(f"✅ Agent ready with ID: {self.agent_id}")
             
             # Update agent_id everywhere after successful registration
             await self._update_all_agent_ids()
@@ -297,14 +516,31 @@ class LinuxAgentManager:
             await self.event_processor.start()
             self.logger.info("✅ Event Processor started")
             
-            # Start Collectors
-            self.logger.info("📊 Starting Collectors...")
-            for collector_name, collector in self.collectors.items():
-                try:
-                    await collector.start()
-                    self.logger.info(f"✅ {collector_name} collector started")
-                except Exception as e:
-                    self.logger.error(f"❌ Failed to start {collector_name} collector: {e}")
+            # Start collectors
+            self.logger.info("🚀 Starting collectors...")
+            
+            try:
+                if hasattr(self, 'process_collector') and self.process_collector:
+                    await self.process_collector.start()
+                    self.logger.info("✅ process collector started")
+                
+                if hasattr(self, 'file_collector') and self.file_collector:
+                    await self.file_collector.start()
+                    self.logger.info("✅ file collector started")
+                
+                if hasattr(self, 'network_collector') and self.network_collector:
+                    await self.network_collector.start()
+                    self.logger.info("✅ network collector started")
+                
+                if hasattr(self, 'authentication_collector') and self.authentication_collector:
+                    await self.authentication_collector.start()
+                    self.logger.info("✅ authentication collector started")
+                
+                if hasattr(self, 'system_collector') and self.system_collector:
+                    await self.system_collector.start()
+                    self.logger.info("✅ system collector started")
+            except Exception as e:
+                self.logger.error(f"❌ Error starting collectors: {e}")
             
             # Set final running state
             self.is_running = True
@@ -334,13 +570,35 @@ class LinuxAgentManager:
             self.is_monitoring = False
             
             # Stop collectors
-            for collector_name, collector in self.collectors.items():
-                try:
-                    self.logger.info(f"📊 Stopping {collector_name} collector...")
-                    await collector.stop()
-                    self.logger.info(f"✅ {collector_name} collector stopped")
-                except Exception as e:
-                    self.logger.error(f"❌ Error stopping {collector_name} collector: {e}")
+            self.logger.info("🛑 Stopping collectors...")
+            
+            try:
+                if hasattr(self, 'process_collector') and self.process_collector:
+                    self.logger.info("📊 Stopping process collector...")
+                    await self.process_collector.stop()
+                    self.logger.info("✅ process collector stopped")
+                
+                if hasattr(self, 'file_collector') and self.file_collector:
+                    self.logger.info("📊 Stopping file collector...")
+                    await self.file_collector.stop()
+                    self.logger.info("✅ file collector stopped")
+                
+                if hasattr(self, 'network_collector') and self.network_collector:
+                    self.logger.info("📊 Stopping network collector...")
+                    await self.network_collector.stop()
+                    self.logger.info("✅ network collector stopped")
+                
+                if hasattr(self, 'authentication_collector') and self.authentication_collector:
+                    self.logger.info("📊 Stopping authentication collector...")
+                    await self.authentication_collector.stop()
+                    self.logger.info("✅ authentication collector stopped")
+                
+                if hasattr(self, 'system_collector') and self.system_collector:
+                    self.logger.info("📊 Stopping system collector...")
+                    await self.system_collector.stop()
+                    self.logger.info("✅ system collector stopped")
+            except Exception as e:
+                self.logger.error(f"❌ Error stopping collectors: {e}")
             
             # Stop event processor
             if self.event_processor:
@@ -367,8 +625,16 @@ class LinuxAgentManager:
             self.logger.error(f"❌ Error stopping Linux agent manager: {e}")
     
     async def _register_with_server(self):
-        """✅ FIXED: Registration with ALL required fields"""
+        """✅ FIXED: Registration with ALL required fields and duplicate check"""
         try:
+            # ✅ FIXED: Check if already registered
+            if self.is_registered and self.agent_id:
+                self.logger.info(f"✅ Agent already registered with ID: {self.agent_id[:8]}...")
+                self.logger.info(f"   🖥️ Hostname: {self.system_info['hostname']}")
+                self.logger.info(f"   🌐 IP: {self._get_local_ip()}")
+                self.logger.info(f"   🐧 OS: Linux {self.system_info.get('distribution', 'Unknown')}")
+                return True
+            
             self.logger.info("📡 Registering Linux Agent with complete data...")
             
             # ✅ FIXED: Get complete system information
@@ -415,33 +681,203 @@ class LinuxAgentManager:
             self.logger.info(f"   🐧 OS: {registration_data.operating_system}")
             self.logger.info(f"   🌐 Domain: {registration_data.domain}")
             
-            # ✅ FIXED: Send registration with proper error handling
-            response = await self.communication.register_agent(registration_data)
+            # ✅ FIXED: Register agent with server
+            self.logger.info("📝 Registering agent with server...")
+            registration_result = await self.communication.register_agent(registration_data)
             
-            if response and response.get('success'):
-                # ✅ FIXED: Handle agent_id from server
-                server_agent_id = response.get('agent_id')
-                if server_agent_id:
-                    if server_agent_id != self.agent_id:
-                        self.logger.info(f"📋 Server assigned new agent_id: {server_agent_id[:8]}...")
-                        self.agent_id = server_agent_id
-                        self._save_agent_id(self.agent_id)
-                
-                self.is_registered = True
-                self.logger.info(f"✅ Linux Agent registered successfully: {self.agent_id}")
-                
-                # ✅ FIXED: Update all components with correct agent_id
-                await self._update_all_agent_ids()
-                
-                return True
-                
+            if registration_result and (registration_result.get('success') or registration_result.get('agent_id')):
+                self.agent_id = registration_result.get('agent_id')
+                if self.agent_id:
+                    self.logger.info(f"✅ Agent registered successfully: {self.agent_id}")
+                    
+                    # ✅ FIXED: Test event submission after registration (optional)
+                    test_event_submission = self.config.get('agent', {}).get('test_event_submission', False)
+                    if test_event_submission:
+                        self.logger.info("🧪 Testing event submission...")
+                        test_success = await self.communication.test_event_submission()
+                        if test_success:
+                            self.logger.info("✅ Event submission test passed")
+                        else:
+                            self.logger.warning("⚠️ Event submission test failed - will continue anyway")
+                    else:
+                        self.logger.info("⏭️ Skipping event submission test (disabled in config)")
+                    
+                    return True
+                else:
+                    self.logger.error("❌ Registration successful but no agent_id returned")
+                    return False
             else:
-                error_msg = response.get('error', 'Unknown error') if response else 'No response'
-                raise Exception(f"Registration failed: {error_msg}")
+                error_msg = registration_result.get('error', 'Unknown error') if registration_result else 'No response'
+                self.logger.error(f"❌ Agent registration failed: {error_msg}")
+                return False
                 
         except Exception as e:
             self.logger.error(f"❌ Agent registration failed: {e}")
             raise
+    
+    def _get_local_ip(self) -> str:
+        """Get actual local IP address from system"""
+        try:
+            # Try multiple methods to get the actual local IP
+            import socket
+            
+            # Method 1: Connect to external service
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                ip = s.getsockname()[0]
+                s.close()
+                if ip and ip != "127.0.0.1":
+                    return ip
+            except:
+                pass
+            
+            # Method 2: Get from network interfaces
+            try:
+                import psutil
+                net_if_addrs = psutil.net_if_addrs()
+                for interface, addrs in net_if_addrs.items():
+                    for addr in addrs:
+                        if addr.family == socket.AF_INET and not addr.address.startswith('127.'):
+                            return addr.address
+            except:
+                pass
+            
+            # Method 3: Get hostname and resolve
+            try:
+                hostname = socket.gethostname()
+                ip = socket.gethostbyname(hostname)
+                if ip and ip != "127.0.0.1":
+                    return ip
+            except:
+                pass
+            
+            # Method 4: Get from environment (if set)
+            import os
+            if 'HOSTNAME' in os.environ:
+                try:
+                    ip = socket.gethostbyname(os.environ['HOSTNAME'])
+                    if ip and ip != "127.0.0.1":
+                        return ip
+                except:
+                    pass
+            
+            # Fallback to localhost
+            return "127.0.0.1"
+            
+        except Exception as e:
+            self.logger.debug(f"Error getting local IP: {e}")
+            return "127.0.0.1"
+    
+    def _get_mac_address(self) -> str:
+        """Get actual MAC address from network interfaces"""
+        try:
+            import psutil
+            import socket
+            
+            # Get MAC address from the primary network interface
+            net_if_addrs = psutil.net_if_addrs()
+            
+            # Look for the first non-loopback interface with a MAC address
+            for interface, addrs in net_if_addrs.items():
+                # Skip loopback and virtual interfaces
+                if interface.startswith('lo') or interface.startswith('docker') or interface.startswith('veth'):
+                    continue
+                    
+                for addr in addrs:
+                    if addr.family == psutil.AF_LINK:  # MAC address
+                        return addr.address
+                    elif hasattr(addr, 'family') and addr.family == socket.AF_PACKET:  # Linux specific
+                        return addr.address
+            
+            # If no MAC found, try to get from /sys/class/net
+            try:
+                import os
+                for interface in os.listdir('/sys/class/net'):
+                    if interface.startswith('lo') or interface.startswith('docker'):
+                        continue
+                    mac_path = f'/sys/class/net/{interface}/address'
+                    if os.path.exists(mac_path):
+                        with open(mac_path, 'r') as f:
+                            mac = f.read().strip()
+                            if mac and mac != "00:00:00:00:00:00":
+                                return mac
+            except:
+                pass
+            
+            # Fallback to UUID-based method
+            try:
+                import uuid
+                mac = ':'.join(['{:02x}'.format((uuid.getnode() >> ele) & 0xff) 
+                               for ele in range(0,8*6,8)][::-1])
+                return mac
+            except:
+                return "00:00:00:00:00:00"
+                
+        except Exception as e:
+            self.logger.debug(f"Error getting MAC address: {e}")
+            return "00:00:00:00:00:00"
+    
+    def _get_domain(self) -> str:
+        """Get actual system domain from configuration"""
+        try:
+            import socket
+            
+            # Method 1: Get from /etc/hostname and /etc/hosts
+            try:
+                with open('/etc/hostname', 'r') as f:
+                    hostname = f.read().strip()
+                    if '.' in hostname:
+                        return hostname.split('.', 1)[1]
+            except:
+                pass
+            
+            # Method 2: Get from /etc/resolv.conf
+            try:
+                with open('/etc/resolv.conf', 'r') as f:
+                    for line in f:
+                        if line.startswith('domain '):
+                            domain = line.split()[1].strip()
+                            if domain and domain != 'localdomain':
+                                return domain
+                        elif line.startswith('search '):
+                            domain = line.split()[1].strip()
+                            if domain and domain != 'localdomain':
+                                return domain
+            except:
+                pass
+            
+            # Method 3: Get from socket.getfqdn()
+            try:
+                fqdn = socket.getfqdn()
+                if '.' in fqdn and not fqdn.endswith('.localdomain'):
+                    return fqdn.split('.', 1)[1]
+            except:
+                pass
+            
+            # Method 4: Get from environment variables
+            import os
+            for env_var in ['DOMAIN', 'HOSTNAME', 'HOST']:
+                if env_var in os.environ:
+                    value = os.environ[env_var]
+                    if '.' in value and not value.endswith('.localdomain'):
+                        return value.split('.', 1)[1]
+            
+            # Method 5: Try to get from DNS
+            try:
+                hostname = socket.gethostname()
+                fqdn = socket.gethostbyaddr(socket.gethostbyname(hostname))[0]
+                if '.' in fqdn and not fqdn.endswith('.localdomain'):
+                    return fqdn.split('.', 1)[1]
+            except:
+                pass
+            
+            # Fallback to local.linux
+            return "local.linux"
+            
+        except Exception as e:
+            self.logger.debug(f"Error getting domain: {e}")
+            return "local.linux"
     
     async def _update_all_agent_ids(self):
         """✅ FIXED: Update agent_id in ALL components"""
@@ -490,39 +926,125 @@ class LinuxAgentManager:
             self.logger.error(f"❌ Heartbeat loop failed: {e}")
     
     async def _send_heartbeat(self, status: str = 'Active'):
-        """Send heartbeat to server"""
+        """Send heartbeat to server with real system data"""
         try:
             if not self.is_registered or not self.communication:
                 return
             
-            # Get system metrics
-            cpu_percent = psutil.cpu_percent(interval=1)
-            memory = psutil.virtual_memory()
-            disk = psutil.disk_usage('/')
-            
-            # Create heartbeat data
-            heartbeat_data = AgentHeartbeatData(
-                agent_id=self.agent_id,
-                hostname=self.system_info['hostname'],
-                status=status,
-                timestamp=datetime.now().isoformat(),
-                cpu_usage=cpu_percent,
-                memory_usage=memory.percent,
-                disk_usage=disk.percent,
-                uptime=time.time() - psutil.boot_time(),
-                collector_status=self._get_collector_status(),
-                events_collected=self.event_processor.get_stats().get('events_received', 0) if self.event_processor else 0,
-                events_sent=self.event_processor.get_stats().get('events_sent', 0) if self.event_processor else 0,
-                metadata={
-                    'linux_agent': True,
-                    'collector_count': len(self.collectors),
-                    'platform': 'linux',
-                    'distribution': self.system_info.get('distribution', 'Unknown')
-                }
-            )
-            
-            await self.communication.send_heartbeat(heartbeat_data)
-            self.last_heartbeat = datetime.now()
+            # Get comprehensive system metrics from actual system
+            try:
+                # CPU metrics
+                cpu_percent = psutil.cpu_percent(interval=1)
+                cpu_count = psutil.cpu_count()
+                cpu_freq = psutil.cpu_freq()
+                cpu_stats = psutil.cpu_stats()
+                
+                # Memory metrics
+                memory = psutil.virtual_memory()
+                swap = psutil.swap_memory()
+                
+                # Disk metrics
+                disk = psutil.disk_usage('/')
+                disk_io = psutil.disk_io_counters()
+                
+                # Network metrics
+                net_io = psutil.net_io_counters()
+                net_if_stats = psutil.net_if_stats()
+                
+                # System load
+                load_avg = os.getloadavg()
+                
+                # Process metrics
+                process_count = len(psutil.pids())
+                
+                # System uptime
+                uptime = time.time() - psutil.boot_time()
+                
+                # Get collector statistics
+                collector_stats = {}
+                for name, collector in self.collectors.items():
+                    if hasattr(collector, 'get_stats'):
+                        collector_stats[name] = collector.get_stats()
+                
+                # Create comprehensive heartbeat data
+                heartbeat_data = AgentHeartbeatData(
+                    agent_id=self.agent_id,
+                    hostname=self.system_info['hostname'],
+                    status=status,
+                    timestamp=datetime.now().isoformat(),
+                    cpu_usage=cpu_percent,
+                    memory_usage=memory.percent,
+                    disk_usage=disk.percent,
+                    network_latency=0,  # Will be calculated if needed
+                    uptime=uptime,
+                    collector_status=self._get_collector_status(),
+                    events_collected=self.event_processor.get_stats().get('events_received', 0) if self.event_processor else 0,
+                    events_sent=self.event_processor.get_stats().get('events_sent', 0) if self.event_processor else 0,
+                    events_failed=self.event_processor.get_stats().get('events_failed', 0) if self.event_processor else 0,
+                    alerts_received=0,  # Will be updated when alerts are implemented
+                    load_average=list(load_avg),
+                    memory_details={
+                        'total': memory.total,
+                        'available': memory.available,
+                        'used': memory.used,
+                        'free': memory.free,
+                        'swap_total': swap.total,
+                        'swap_used': swap.used,
+                        'swap_free': swap.free
+                    },
+                    disk_details={
+                        'total': disk.total,
+                        'used': disk.used,
+                        'free': disk.free,
+                        'read_bytes': disk_io.read_bytes if disk_io else 0,
+                        'write_bytes': disk_io.write_bytes if disk_io else 0
+                    },
+                    network_details={
+                        'bytes_sent': net_io.bytes_sent,
+                        'bytes_recv': net_io.bytes_recv,
+                        'packets_sent': net_io.packets_sent,
+                        'packets_recv': net_io.packets_recv,
+                        'interface_count': len(net_if_stats)
+                    },
+                    active_processes=process_count,
+                    agent_process_id=os.getpid(),
+                    security_status="Normal",  # Will be updated based on security events
+                    threat_level="Low",  # Will be updated based on threat detection
+                    metadata={
+                        'linux_agent': True,
+                        'collector_count': len(self.collectors),
+                        'platform': 'linux',
+                        'distribution': self.system_info.get('distribution', 'Unknown'),
+                        'kernel': self.system_info.get('kernel', 'Unknown'),
+                        'architecture': self.system_info.get('architecture', 'Unknown'),
+                        'cpu_count': cpu_count,
+                        'cpu_freq_mhz': cpu_freq.current if cpu_freq else 0,
+                        'cpu_ctx_switches': cpu_stats.ctx_switches if cpu_stats else 0,
+                        'cpu_interrupts': cpu_stats.interrupts if cpu_stats else 0,
+                        'collector_stats': collector_stats,
+                        'system_load_1min': load_avg[0],
+                        'system_load_5min': load_avg[1],
+                        'system_load_15min': load_avg[2]
+                    }
+                )
+                
+                await self.communication.send_heartbeat(heartbeat_data)
+                self.last_heartbeat = datetime.now()
+                
+            except Exception as e:
+                self.logger.error(f"❌ Error collecting system metrics: {e}")
+                # Send basic heartbeat if detailed collection fails
+                basic_heartbeat = AgentHeartbeatData(
+                    agent_id=self.agent_id,
+                    hostname=self.system_info['hostname'],
+                    status=status,
+                    timestamp=datetime.now().isoformat(),
+                    cpu_usage=psutil.cpu_percent(interval=1),
+                    memory_usage=psutil.virtual_memory().percent,
+                    disk_usage=psutil.disk_usage('/').percent,
+                    metadata={'linux_agent': True, 'error': str(e)}
+                )
+                await self.communication.send_heartbeat(basic_heartbeat)
             
         except Exception as e:
             self.logger.error(f"❌ Heartbeat send failed: {e}")
@@ -631,5 +1153,6 @@ class LinuxAgentManager:
             'collector_status': self._get_collector_status(),
             'start_time': self.start_time.isoformat() if self.start_time else None,
             'last_heartbeat': self.last_heartbeat.isoformat() if self.last_heartbeat else None,
-            'has_root_privileges': self.has_root_privileges
+            'has_root_privileges': self.has_root_privileges,
+            'requires_root': self.requires_root  # ✅ FIXED: Added this attribute
         }

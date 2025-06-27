@@ -259,7 +259,7 @@ class EventProcessor:
             self.logger.info(f"📦 Batch processor {processor_id} stopped")
     
     async def _process_batch(self, processor_id: int, batch_item: Dict) -> bool:
-        """Process event batch"""
+        """Process event batch with improved fallback handling"""
         try:
             batch = batch_item['batch']
             if not batch:
@@ -267,22 +267,81 @@ class EventProcessor:
             
             start_time = time.time()
             
+            # Log batch details
+            self.logger.info(f"📦 Processor {processor_id}: Processing batch of {len(batch)} events")
+            
+            # Validate each event before submission
+            valid_events = []
+            invalid_events = []
+            for i, event in enumerate(batch):
+                try:
+                    # Check if event has agent_id
+                    if not event.agent_id:
+                        invalid_events.append((i, event, "Missing agent_id"))
+                        continue
+                    
+                    # Try to convert to dict to catch any serialization issues
+                    try:
+                        event_dict = event.to_dict()
+                        if 'error' in event_dict:
+                            invalid_events.append((i, event, f"Event conversion error: {event_dict['error']}"))
+                            continue
+                        valid_events.append(event)
+                    except Exception as dict_error:
+                        invalid_events.append((i, event, f"Dict conversion failed: {dict_error}"))
+                        continue
+                        
+                except Exception as validation_error:
+                    invalid_events.append((i, event, f"Validation error: {validation_error}"))
+            
+            # Log validation results
+            if invalid_events:
+                self.logger.error(f"❌ Processor {processor_id}: Found {len(invalid_events)} invalid events:")
+                for i, event, reason in invalid_events:
+                    self.logger.error(f"   Event {i}: {reason}")
+                    self.logger.error(f"   Event type: {event.event_type}, action: {event.event_action}")
+            
+            if not valid_events:
+                self.logger.error(f"❌ Processor {processor_id}: No valid events to submit")
+                return False
+            
+            self.logger.info(f"📦 Processor {processor_id}: Submitting {len(valid_events)} valid events")
+            
             # Submit batch to server
-            success, response, error = await self.communication.submit_event_batch(batch)
+            success, response, error = await self.communication.submit_event_batch(valid_events)
             
             # Track processing time
             processing_time = time.time() - start_time
             self.processing_times.append(processing_time)
             
             if success:
-                self.logger.debug(f"📤 Batch submitted successfully: {len(batch)} events")
+                self.logger.info(f"✅ Processor {processor_id}: Batch submitted successfully: {len(valid_events)} events in {processing_time:.2f}s")
+                if response and 'message' in response:
+                    self.logger.info(f"📋 Processor {processor_id}: {response['message']}")
                 return True
             else:
-                self.logger.warning(f"⚠️ Batch submission failed: {error}")
-                return False
+                # ✅ FIXED: Check if this was a fallback response
+                response_str = str(response) if response else ""
+                error_str = str(error) if error else ""
+                
+                if ("Individual:" in response_str or 
+                    "fallback" in error_str.lower() or 
+                    "individual" in response_str.lower()):
+                    # This was a fallback - count as success
+                    self.logger.info(f"✅ Processor {processor_id}: Fallback to individual submission completed")
+                    if response and 'message' in response:
+                        self.logger.info(f"📋 Processor {processor_id}: {response['message']}")
+                    return True
+                else:
+                    # Real failure
+                    self.logger.warning(f"⚠️ Processor {processor_id}: Batch submission failed: {error}")
+                    self.logger.warning(f"⚠️ Processor {processor_id}: Response: {response}")
+                    return False
             
         except Exception as e:
-            self.logger.error(f"❌ Batch processing error: {e}")
+            self.logger.error(f"❌ Processor {processor_id}: Batch processing error: {e}")
+            import traceback
+            self.logger.error(f"❌ Processor {processor_id}: Full traceback: {traceback.format_exc()}")
             return False
     
     async def _monitoring_loop(self):

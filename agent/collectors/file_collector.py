@@ -25,7 +25,7 @@ except ImportError:
     FileSystemEventHandler = None
 
 from agent.collectors.base_collector import LinuxBaseCollector
-from agent.schemas.events import EventData, EventAction
+from agent.schemas.events import EventData
 
 class LinuxFileEventHandler(FileSystemEventHandler):
     """Linux file system event handler using inotify - FIXED VERSION"""
@@ -295,6 +295,14 @@ class LinuxFileCollector(LinuxBaseCollector):
     async def _handle_file_event(self, action: str, file_path: str, old_path: str = None):
         """Handle file system event from inotify - FIXED VERSION"""
         try:
+            # ✅ FIXED: Rate limiting to prevent spam
+            current_time = time.time()
+            if hasattr(self, '_last_event_time') and current_time - self._last_event_time < 0.1:
+                # Skip events that are too frequent (less than 100ms apart)
+                return
+            
+            self._last_event_time = current_time
+            
             # FIXED: Validate agent_id is available
             if not self.agent_id:
                 self.logger.error(f"❌ CRITICAL: File event cannot be processed - agent_id is None")
@@ -302,7 +310,6 @@ class LinuxFileCollector(LinuxBaseCollector):
             
             # Check for event deduplication
             event_key = f"{action}:{file_path}"
-            current_time = time.time()
             
             if event_key in self.recent_file_events:
                 if current_time - self.recent_file_events[event_key] < 1.0:  # 1 second dedup
@@ -551,12 +558,12 @@ class LinuxFileCollector(LinuxBaseCollector):
                 return None
             
             action_map = {
-                'created': EventAction.CREATE,
-                'modified': EventAction.MODIFY,
-                'deleted': EventAction.DELETE,
-                'moved': EventAction.MODIFY
+                'created': "Create",
+                'modified': "Modify",
+                'deleted': "Delete",
+                'moved': "Modify"
             }
-            event_action = action_map.get(action, EventAction.ACCESS)
+            event_action = action_map.get(action, "Access")
             
             file_info = None
             if action != 'deleted':
@@ -594,7 +601,7 @@ class LinuxFileCollector(LinuxBaseCollector):
                 event_action=event_action,
                 event_timestamp=datetime.now(),
                 severity=severity,
-                agent_id=self.agent_id,  # FIXED: Ensure agent_id is set
+                agent_id=self.agent_id,  # Ensure agent_id is set
                 file_path=file_path,
                 file_name=file_name,
                 file_size=file_info.get('size', 0) if file_info else 0,
@@ -653,7 +660,7 @@ class LinuxFileCollector(LinuxBaseCollector):
             total_files = len(self.monitored_files)
             return EventData(
                 event_type="File",
-                event_action=EventAction.RESOURCE_USAGE,
+                event_action="Resource_Usage",
                 event_timestamp=datetime.now(),
                 severity="Info",
                 agent_id=self.agent_id,

@@ -97,7 +97,7 @@ class EventSeverity(Enum):
 
 @dataclass
 class EventData:
-    """✅ FIXED: Event Data with proper agent_id validation"""
+    """✅ FIXED: Event Data with proper agent_id validation and server schema compatibility"""
     
     # ✅ FIXED: Core event information
     event_type: str
@@ -114,13 +114,17 @@ class EventData:
     process_path: Optional[str] = None
     command_line: Optional[str] = None
     parent_pid: Optional[int] = None
+    parent_process_name: Optional[str] = None  # Added for server compatibility
     process_user: Optional[str] = None
+    process_hash: Optional[str] = None  # Added for server compatibility
     
     # File information
     file_path: Optional[str] = None
     file_name: Optional[str] = None
     file_size: Optional[int] = None
+    file_hash: Optional[str] = None  # Added for server compatibility
     file_extension: Optional[str] = None
+    file_operation: Optional[str] = None  # Added for server compatibility
     
     # Network information
     source_ip: Optional[str] = None
@@ -129,6 +133,12 @@ class EventData:
     destination_port: Optional[int] = None
     protocol: Optional[str] = None
     direction: Optional[str] = None
+    
+    # Registry information (not used in Linux but required by server schema)
+    registry_key: Optional[str] = None
+    registry_value_name: Optional[str] = None
+    registry_value_data: Optional[str] = None
+    registry_operation: Optional[str] = None
     
     # Authentication information
     login_user: Optional[str] = None
@@ -190,45 +200,84 @@ class EventData:
             return f"Linux Event: {self.event_type} - {self.event_action}"
     
     def to_dict(self) -> Dict[str, Any]:
-        """✅ FIXED: Convert to dictionary with agent_id validation"""
+        """✅ FIXED: Convert to dictionary matching server EventSubmissionRequest schema exactly"""
         # ✅ FIXED: Critical validation
         if not self.agent_id:
             return {'error': 'Event missing required agent_id field'}
         
+        # ✅ FIXED: Handle event_type properly
+        event_type_value = self.event_type
+        if hasattr(self.event_type, 'value'):
+            event_type_value = self.event_type.value
+        elif isinstance(self.event_type, str):
+            event_type_value = self.event_type
+        
+        # ✅ FIXED: Handle event_action properly
+        event_action_value = self.event_action
+        if hasattr(self.event_action, 'value'):
+            event_action_value = self.event_action.value
+        elif isinstance(self.event_action, str):
+            event_action_value = self.event_action
+        
+        # ✅ FIXED: Ensure proper datetime format
+        timestamp_str = self.event_timestamp.isoformat() if hasattr(self.event_timestamp, 'isoformat') else str(self.event_timestamp)
+        
+        # ✅ FIXED: Match server EventSubmissionRequest schema exactly
         data = {
-            'agent_id': self.agent_id,
-            'event_type': self.event_type,
-            'event_action': self.event_action,
-            'event_timestamp': self.event_timestamp.isoformat(),
-            'severity': self.severity,
-            'process_id': self.process_id,
-            'process_name': self.process_name,
-            'process_path': self.process_path,
-            'command_line': self.command_line,
-            'parent_pid': self.parent_pid,
-            'process_user': self.process_user,
-            'file_path': self.file_path,
-            'file_name': self.file_name,
-            'file_size': self.file_size,
-            'file_extension': self.file_extension,
-            'source_ip': self.source_ip,
-            'destination_ip': self.destination_ip,
-            'source_port': self.source_port,
-            'destination_port': self.destination_port,
-            'protocol': self.protocol,
-            'direction': self.direction,
-            'login_user': self.login_user,
-            'login_type': self.login_type,
-            'login_result': self.login_result,
-            'threat_level': self.threat_level,
-            'risk_score': self.risk_score,
-            'analyzed': self.analyzed,
-            'description': self.description,
-            'raw_event_data': self.raw_event_data
+            'agent_id': str(self.agent_id),
+            'event_type': str(event_type_value),
+            'event_action': str(event_action_value),
+            'event_timestamp': timestamp_str,
+            'severity': str(self.severity),
+            
+            # Process fields - match server schema
+            'process_id': int(self.process_id) if self.process_id is not None else None,
+            'process_name': str(self.process_name) if self.process_name else None,
+            'process_path': str(self.process_path) if self.process_path else None,
+            'command_line': str(self.command_line) if self.command_line else None,
+            'parent_pid': int(self.parent_pid) if self.parent_pid is not None else None,
+            'parent_process_name': str(self.parent_process_name) if self.parent_process_name else None,
+            'process_user': str(self.process_user) if self.process_user else None,
+            'process_hash': str(self.process_hash) if self.process_hash else None,
+            
+            # File fields - match server schema
+            'file_path': str(self.file_path) if self.file_path else None,
+            'file_name': str(self.file_name) if self.file_name else None,
+            'file_size': int(self.file_size) if self.file_size is not None else None,
+            'file_hash': str(self.file_hash) if self.file_hash else None,
+            'file_extension': str(self.file_extension) if self.file_extension else None,
+            'file_operation': str(self.file_operation) if self.file_operation else str(event_action_value),
+            
+            # Network fields - match server schema
+            'source_ip': str(self.source_ip) if self.source_ip else None,
+            'destination_ip': str(self.destination_ip) if self.destination_ip else None,
+            'source_port': int(self.source_port) if self.source_port is not None else None,
+            'destination_port': int(self.destination_port) if self.destination_port is not None else None,
+            'protocol': str(self.protocol) if self.protocol else None,
+            'direction': str(self.direction) if self.direction else None,
+            
+            # Registry fields - not used in Linux but required by schema
+            'registry_key': str(self.registry_key) if self.registry_key else None,
+            'registry_value_name': str(self.registry_value_name) if self.registry_value_name else None,
+            'registry_value_data': str(self.registry_value_data) if self.registry_value_data else None,
+            'registry_operation': str(self.registry_operation) if self.registry_operation else None,
+            
+            # Authentication fields - match server schema
+            'login_user': str(self.login_user) if self.login_user else None,
+            'login_type': str(self.login_type) if self.login_type else None,
+            'login_result': str(self.login_result) if self.login_result else None,
+                
+                # Raw event data
+            'raw_event_data': self.raw_event_data if self.raw_event_data else {}
         }
         
-        # ✅ FIXED: Remove None values
-        return {k: v for k, v in data.items() if v is not None}
+        # ✅ FIXED: Remove None values but keep required fields
+        cleaned_data = {}
+        for k, v in data.items():
+            if v is not None or k in ['agent_id', 'event_type', 'event_action', 'event_timestamp', 'severity']:
+                cleaned_data[k] = v
+        
+        return cleaned_data
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'EventData':
@@ -390,8 +439,13 @@ def validate_event_for_database(event: EventData) -> tuple[bool, str]:
         if not event.event_action:
             return False, "Missing required field: event_action"
         
-        # Validate event_type (Linux - no Registry)
-        valid_event_types = ["Process", "File", "Network", "Authentication", "System", "Procfs", "Sysfs", "Sysctl", "Kernel"]
+        # Validate event_type (Linux - comprehensive list)
+        valid_event_types = [
+            "Process", "File", "Network", "Authentication", "System", 
+            "Procfs", "Sysfs", "Sysctl", "Kernel", "Container_Security",
+            "Service_Started", "Service_Stopped", "Service_Removed",
+            "System_Event", "System_Performance", "System_Security"
+        ]
         if event.event_type not in valid_event_types:
             return False, f"Invalid event_type: {event.event_type}. Must be one of {valid_event_types}"
         
@@ -408,6 +462,10 @@ def validate_event_for_database(event: EventData) -> tuple[bool, str]:
         # Validate risk_score
         if not (0 <= event.risk_score <= 100):
             return False, f"Invalid risk_score: {event.risk_score}. Must be between 0 and 100"
+        
+        # Validate timestamp
+        if not hasattr(event, 'event_timestamp') or event.event_timestamp is None:
+            return False, "Missing required field: event_timestamp"
         
         return True, "Valid"
         

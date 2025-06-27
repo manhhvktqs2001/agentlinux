@@ -2,13 +2,44 @@
 # All issues resolved - database compatible
 
 agent:
-  name: 'EDR-Agent-Linux-Fixed'
-  version: '2.1.0-Linux-Fixed'
-  platform: 'linux'
-  heartbeat_interval: 30
+  # Agent identification
+  agent_id: null  # Will be auto-generated if not set
+  agent_name: "Linux EDR Agent"
+  agent_version: "2.1.0"
+  
+  # Event processing
   event_batch_size: 50
   event_queue_size: 1000
+  individual_threshold: 5  # Use individual submission for batches <= 5 events
+  disable_batch_submission: true  # Set to true to use only individual submissions
+  test_event_submission: false  # Set to false to skip test event submission
+  
+  # Processing workers
+  num_workers: 2
+  num_batch_processors: 1
+  
+  # Collection intervals (seconds) - REDUCED SPAM
+  process_collection_interval: 10
+  file_collection_interval: 60  # Increased to reduce spam
+  network_collection_interval: 30
+  system_collection_interval: 60
+  authentication_collection_interval: 120
+  
+  # Heartbeat
+  heartbeat_interval: 30
+  
+  # System monitoring
+  system_monitor_interval: 60
+  memory_threshold: 80  # Alert if memory usage > 80%
+  cpu_threshold: 90     # Alert if CPU usage > 90%
   debug_mode: false
+
+  # Collector enable/disable options
+  enable_process_collector: true
+  enable_file_collector: false  # Disabled to reduce spam
+  enable_network_collector: true
+  enable_system_collector: true
+  enable_authentication_collector: true
 
 server:
   host: '192.168.20.85'
@@ -21,7 +52,7 @@ server:
 collection:
   enabled: true
   collect_processes: true
-  collect_files: true
+  collect_files: false  # Disabled to reduce spam
   collect_network: true
   collect_authentication: true
   collect_system_events: true
