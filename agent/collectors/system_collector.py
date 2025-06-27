@@ -1,7 +1,7 @@
-# agent/collectors/system_collector.py - Linux System Collector
+# agent/collectors/system_collector.py - FIXED Linux System Collector
 """
-Linux System Collector - Monitor system events, services, and systemd units
-Enhanced security monitoring for Linux system activities
+Linux System Collector - FIXED VERSION
+Monitor system events, services, and systemd units with corrected imports
 """
 
 import asyncio
@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 
 from agent.collectors.base_collector import BaseCollector
-from agent.schemas.events import EventData, EventType, EventSeverity
+from agent.schemas.events import EventData, EventSeverity
 
 @dataclass
 class SystemService:
@@ -332,10 +332,12 @@ class LinuxSystemCollector(BaseCollector):
             
             # Create event
             event_data = EventData(
-                event_type=EventType.SERVICE_STARTED,
-                severity=EventSeverity.INFO,
-                source="system_collector",
-                data={
+                event_type="System",
+                event_action="Service_Start",
+                severity=EventSeverity.INFO.value,
+                agent_id=self.agent_id,
+                description=f"Service started: {service.name}",
+                raw_event_data={
                     'service_name': service.name,
                     'status': service.status,
                     'description': service.description,
@@ -343,7 +345,7 @@ class LinuxSystemCollector(BaseCollector):
                 }
             )
             
-            await self._send_event(event_data)
+            await self._send_event_immediately(event_data)
             
         except Exception as e:
             self.logger.error(f"❌ New service handling failed: {e}")
@@ -364,13 +366,15 @@ class LinuxSystemCollector(BaseCollector):
                 if old_status != service.status:
                     self.logger.info(f"🔄 Service status changed: {service.name} - {old_status} -> {service.status}")
                     
-                    event_type = EventType.SERVICE_STARTED if service.status == 'running' else EventType.SERVICE_STOPPED
+                    event_action = "Service_Start" if service.status == 'running' else "Service_Stop"
                     
                     event_data = EventData(
-                        event_type=event_type,
-                        severity=EventSeverity.INFO,
-                        source="system_collector",
-                        data={
+                        event_type="System",
+                        event_action=event_action,
+                        severity=EventSeverity.INFO.value,
+                        agent_id=self.agent_id,
+                        description=f"Service status changed: {service.name} - {old_status} -> {service.status}",
+                        raw_event_data={
                             'service_name': service.name,
                             'old_status': old_status,
                             'new_status': service.status,
@@ -378,7 +382,7 @@ class LinuxSystemCollector(BaseCollector):
                         }
                     )
                     
-                    await self._send_event(event_data)
+                    await self._send_event_immediately(event_data)
                     
                     # Check for failed services
                     if service.status == 'failed':
@@ -406,17 +410,19 @@ class LinuxSystemCollector(BaseCollector):
                 
                 # Create event
                 event_data = EventData(
-                    event_type=EventType.SERVICE_REMOVED,
-                    severity=EventSeverity.INFO,
-                    source="system_collector",
-                    data={
+                    event_type="System",
+                    event_action="Service_Stop",
+                    severity=EventSeverity.INFO.value,
+                    agent_id=self.agent_id,
+                    description=f"Service removed: {service_name}",
+                    raw_event_data={
                         'service_name': service_name,
                         'description': service.description,
                         'lifetime_seconds': (datetime.now() - service_info['first_seen']).total_seconds()
                     }
                 )
                 
-                await self._send_event(event_data)
+                await self._send_event_immediately(event_data)
                 
                 # Remove from tracking
                 del self.services_tracked[service_name]
@@ -447,10 +453,12 @@ class LinuxSystemCollector(BaseCollector):
                 
                 # Create general event
                 event_data = EventData(
-                    event_type=EventType.SYSTEM_EVENT,
-                    severity=EventSeverity.INFO,
-                    source="system_collector",
-                    data={
+                    event_type="System",
+                    event_action="System_Event",
+                    severity=EventSeverity.INFO.value,
+                    agent_id=self.agent_id,
+                    description=f"System event: {event.event_type}",
+                    raw_event_data={
                         'event_type': event.event_type,
                         'message': event.message,
                         'source': event.source,
@@ -459,7 +467,7 @@ class LinuxSystemCollector(BaseCollector):
                     }
                 )
                 
-                await self._send_event(event_data)
+                await self._send_event_immediately(event_data)
         
         except Exception as e:
             self.logger.error(f"❌ System event monitoring failed: {e}")
@@ -534,13 +542,15 @@ class LinuxSystemCollector(BaseCollector):
                 
                 for change in changes:
                     event_data = EventData(
-                        event_type=EventType.SYSTEM_PERFORMANCE,
-                        severity=EventSeverity.INFO,
-                        source="system_collector",
-                        data=change
+                        event_type="System",
+                        event_action="Resource_Usage",
+                        severity=EventSeverity.INFO.value,
+                        agent_id=self.agent_id,
+                        description=f"Performance change: {change.get('type', 'Unknown')}",
+                        raw_event_data=change
                     )
                     
-                    await self._send_event(event_data)
+                    await self._send_event_immediately(event_data)
             
             self.performance_data = new_performance
             
@@ -793,17 +803,19 @@ class LinuxSystemCollector(BaseCollector):
         """Report security event"""
         try:
             event_data = EventData(
-                event_type=EventType.SYSTEM_SECURITY,
-                severity=severity,
-                source="system_collector",
-                data={
+                event_type="System",
+                event_action="Security_Event",
+                severity=severity.value,
+                agent_id=self.agent_id,
+                description=f"Security event: {event_type}",
+                raw_event_data={
                     'service_name': service_name,
                     'security_event_type': event_type,
                     'details': details
                 }
             )
             
-            await self._send_event(event_data)
+            await self._send_event_immediately(event_data)
             
         except Exception as e:
             self.logger.error(f"❌ Security event reporting failed: {e}")

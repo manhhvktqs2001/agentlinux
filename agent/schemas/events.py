@@ -1,6 +1,6 @@
 # agent/schemas/events.py - FIXED Linux Event Schemas
 """
-Linux Event Data Schemas - FIXED TO MATCH DATABASE SCHEMA
+Linux Event Data Schemas - FIXED VERSION WITH CORRECT EXPORTS
 Compatible with EDR_System database structure and server expectations
 """
 
@@ -9,6 +9,23 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 from enum import Enum
 import logging
+
+# Define EventType enum that was missing
+class EventType(Enum):
+    """Event types matching database expectations"""
+    PROCESS = "Process"
+    FILE = "File" 
+    NETWORK = "Network"
+    REGISTRY = "Registry"
+    AUTHENTICATION = "Authentication"
+    SYSTEM = "System"
+    CONTAINER_SECURITY = "Container_Security"
+    SERVICE_STARTED = "Service_Started"
+    SERVICE_STOPPED = "Service_Stopped"
+    SERVICE_REMOVED = "Service_Removed"
+    SYSTEM_EVENT = "System_Event"
+    SYSTEM_PERFORMANCE = "System_Performance"
+    SYSTEM_SECURITY = "System_Security"
 
 class EventAction(Enum):
     """Event actions matching database expectations"""
@@ -58,14 +75,6 @@ class EventAction(Enum):
     LOAD = "Load"
     UNLOAD = "Unload"
     RESOURCE_USAGE = "Resource_Usage"
-
-class EventSeverity(Enum):
-    """Event severity levels matching database schema"""
-    CRITICAL = "Critical"
-    HIGH = "High"
-    MEDIUM = "Medium"
-    LOW = "Low"
-    INFO = "Info"
 
 @dataclass
 class EventData:
@@ -139,6 +148,7 @@ class EventData:
             # Don't raise error here, just log for debugging
             logger = logging.getLogger(__name__)
             logger.debug(f"EventData created without agent_id - Type: {self.event_type}, Action: {self.event_action}")
+        
         # Ensure event_action is string value
         if hasattr(self.event_action, 'value'):
             self.event_action = self.event_action.value
@@ -210,11 +220,14 @@ class EventData:
                     raw_data = {'original_data': self.raw_event_data}
             else:
                 raw_data = {}
+            
             raw_data.update({
                 'platform': 'linux',
                 'event_timestamp': self.event_timestamp.isoformat(),
                 'description': self.description
             })
+            
+            # Add optional fields that exist
             optional_fields = [
                 'hostname', 'cpu_usage', 'memory_usage', 'disk_usage',
                 'network_usage', 'process_uid', 'process_gid',
@@ -227,11 +240,13 @@ class EventData:
                 'connection_state', 'bytes_sent', 'bytes_received',
                 'login_source_ip', 'login_terminal', 'login_session_id'
             ]
+            
             for field in optional_fields:
                 value = getattr(self, field, None)
                 if value is not None:
                     raw_data[field] = value
-            self.raw_event_data = raw_data  # Lưu là dict, không phải string
+            
+            self.raw_event_data = raw_data  # Store as dict, not string
         except Exception as e:
             self.raw_event_data = {'platform': 'linux', 'error': str(e)}
     
@@ -241,6 +256,7 @@ class EventData:
             # FIX: Validate agent_id before serialization
             if not self.agent_id:
                 return {'error': 'Event missing required agent_id field'}
+            
             data = {
                 # REQUIRED fields (snake_case)
                 'agent_id': self.agent_id,
@@ -248,6 +264,7 @@ class EventData:
                 'event_action': self.event_action,
                 'event_timestamp': self.event_timestamp.isoformat() if self.event_timestamp else None,
                 'severity': self.severity,
+                
                 # Process fields (optional)
                 'process_id': self.process_id,
                 'process_name': self.process_name,
@@ -257,6 +274,7 @@ class EventData:
                 'parent_process_name': self.parent_process_name,
                 'process_user': self.process_user,
                 'process_hash': self.process_hash,
+                
                 # File fields (optional)
                 'file_path': self.file_path,
                 'file_name': self.file_name,
@@ -264,6 +282,7 @@ class EventData:
                 'file_hash': self.file_hash,
                 'file_extension': self.file_extension,
                 'file_operation': self.file_operation,
+                
                 # Network fields (optional)
                 'source_ip': self.source_ip,
                 'destination_ip': self.destination_ip,
@@ -272,17 +291,21 @@ class EventData:
                 'protocol': self.protocol,
                 'direction': self.direction,
                 'connection_status': self.connection_status,
-                # Authentication fields (Linux dùng login_user, login_type, login_result)
+                
+                # Authentication fields (Linux uses login_user, login_type, login_result)
                 'login_user': self.login_user,
                 'login_type': self.login_type,
                 'login_result': self.login_result,
+                
                 # Threat detection fields
                 'threat_level': self.threat_level,
                 'risk_score': self.risk_score,
                 'analyzed': self.analyzed,
+                
                 # Raw event data
                 'raw_event_data': self.raw_event_data
             }
+            
             # Remove None values
             return {k: v for k, v in data.items() if v is not None}
         except Exception as e:
@@ -348,10 +371,6 @@ class EventData:
         """Check if event has suspicious indicators"""
         return self.threat_level in ['Suspicious', 'Malicious'] or self.risk_score >= 30
     
-    def is_critical(self) -> bool:
-        """Check if event is critical"""
-        return self.severity == 'Critical' or self.risk_score >= 90
-
 # Factory functions for creating database-compatible events
 def create_process_event(pid: int, name: str, action: str = "Start", **kwargs) -> EventData:
     """Create process event compatible with database"""
