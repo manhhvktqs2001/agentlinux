@@ -1,7 +1,7 @@
-# agent/collectors/network_collector.py - Linux Network Collector
+# agent/collectors/network_collector.py - FIXED Linux Network Collector
 """
-Linux Network Collector - Monitor network connections using /proc/net and psutil
-Optimized for Linux network monitoring with /proc filesystem integration
+Linux Network Collector - FIXED VERSION
+Monitor network connections using /proc/net and psutil with corrected imports
 """
 
 import os
@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Set
 from collections import defaultdict, deque
 
 from agent.collectors.base_collector import LinuxBaseCollector
-from agent.schemas.events import EventData, EventAction
+from agent.schemas.events import EventData  # FIXED: Removed EventAction import
 
 class LinuxNetworkCollector(LinuxBaseCollector):
     """Linux Network Collector with /proc/net monitoring"""
@@ -385,7 +385,7 @@ class LinuxNetworkCollector(LinuxBaseCollector):
             }
             return EventData(
                 event_type="Network",
-                event_action="Connect",
+                event_action="Connect",  # FIXED: Use string instead of EventAction
                 event_timestamp=datetime.now(),
                 severity="Medium" if conn_info.get('is_suspicious') else "Info",
                 agent_id=self.agent_id,
@@ -437,7 +437,7 @@ class LinuxNetworkCollector(LinuxBaseCollector):
             
             return EventData(
                 event_type="Network",
-                event_action="Disconnect",
+                event_action="Disconnect",  # FIXED: Use string instead of EventAction
                 event_timestamp=datetime.now(),
                 severity="Info",
                 agent_id=self.agent_id,
@@ -447,7 +447,6 @@ class LinuxNetworkCollector(LinuxBaseCollector):
                 destination_port=destination_port,
                 protocol='TCP',
                 direction=direction,
-                
                 description=f"🐧 LINUX CONNECTION CLOSED: {source_ip}:{source_port} -> {destination_ip}:{destination_port}",
                 raw_event_data={
                     'platform': 'linux',
@@ -466,7 +465,7 @@ class LinuxNetworkCollector(LinuxBaseCollector):
         try:
             return EventData(
                 event_type="Network",
-                event_action="Suspicious",
+                event_action="Suspicious",  # FIXED: Use string instead of EventAction
                 event_timestamp=datetime.now(),
                 severity="High",
                 agent_id=self.agent_id,
@@ -476,10 +475,8 @@ class LinuxNetworkCollector(LinuxBaseCollector):
                 destination_port=conn.raddr.port if conn.raddr else 0,
                 protocol='TCP' if conn.type == socket.SOCK_STREAM else 'UDP',
                 direction=conn_info.get('direction', 'Unknown'),
-                
                 process_id=conn.pid,
                 process_name=conn_info.get('process_name'),
-                
                 description=f"🐧 LINUX SUSPICIOUS CONNECTION: {conn.laddr.ip}:{conn.laddr.port} -> {conn.raddr.ip if conn.raddr else 'N/A'}:{conn.raddr.port if conn.raddr else 'N/A'}",
                 raw_event_data={
                     'platform': 'linux',
@@ -500,7 +497,7 @@ class LinuxNetworkCollector(LinuxBaseCollector):
         try:
             return EventData(
                 event_type="Network",
-                event_action="Connect",
+                event_action="Connect",  # FIXED: Use string instead of EventAction
                 event_timestamp=datetime.now(),
                 severity="Info",
                 agent_id=self.agent_id,
@@ -510,10 +507,8 @@ class LinuxNetworkCollector(LinuxBaseCollector):
                 destination_port=conn.raddr.port if conn.raddr else 0,
                 protocol='TCP' if conn.type == socket.SOCK_STREAM else 'UDP',
                 direction="Outbound",
-                
                 process_id=conn.pid,
                 process_name=conn_info.get('process_name'),
-                
                 description=f"🐧 LINUX EXTERNAL CONNECTION: {conn.laddr.ip}:{conn.laddr.port} -> {conn.raddr.ip}:{conn.raddr.port}",
                 raw_event_data={
                     'platform': 'linux',
@@ -534,7 +529,7 @@ class LinuxNetworkCollector(LinuxBaseCollector):
         try:
             return EventData(
                 event_type="Network",
-                event_action="Access",
+                event_action="Access",  # FIXED: Use string instead of EventAction
                 event_timestamp=datetime.now(),
                 severity="Medium" if conn.laddr.port in self.suspicious_ports else "Info",
                 agent_id=self.agent_id,
@@ -544,10 +539,8 @@ class LinuxNetworkCollector(LinuxBaseCollector):
                 destination_port=0,
                 protocol='TCP' if conn.type == socket.SOCK_STREAM else 'UDP',
                 direction="Listening",
-                
                 process_id=conn.pid,
                 process_name=conn_info.get('process_name'),
-                
                 description=f"🐧 LINUX LISTENING PORT: {conn.laddr.ip}:{conn.laddr.port} ({conn_info.get('service_name', 'Unknown')})",
                 raw_event_data={
                     'platform': 'linux',
@@ -589,7 +582,7 @@ class LinuxNetworkCollector(LinuxBaseCollector):
             
             return EventData(
                 event_type="Network",
-                event_action="Resource_Usage",
+                event_action="Resource_Usage",  # FIXED: Use string instead of EventAction
                 event_timestamp=datetime.now(),
                 severity="Info",
                 agent_id=self.agent_id,
@@ -616,73 +609,6 @@ class LinuxNetworkCollector(LinuxBaseCollector):
         except Exception as e:
             self.logger.error(f"❌ Network summary event creation failed: {e}")
             return None
-    
-    async def _monitor_bandwidth_usage(self):
-        """Monitor bandwidth usage (optional enhancement)"""
-        try:
-            # Get network I/O statistics
-            net_io = psutil.net_io_counters()
-            
-            current_time = time.time()
-            current_stats = {
-                'bytes_sent': net_io.bytes_sent,
-                'bytes_recv': net_io.bytes_recv,
-                'timestamp': current_time
-            }
-            
-            # Calculate bandwidth if we have previous stats
-            if hasattr(self, '_last_net_stats'):
-                time_diff = current_time - self._last_net_stats['timestamp']
-                if time_diff > 0:
-                    bytes_sent_diff = current_stats['bytes_sent'] - self._last_net_stats['bytes_sent']
-                    bytes_recv_diff = current_stats['bytes_recv'] - self._last_net_stats['bytes_recv']
-                    
-                    send_rate = bytes_sent_diff / time_diff
-                    recv_rate = bytes_recv_diff / time_diff
-                    
-                    # Check for high bandwidth usage
-                    if send_rate > self.bandwidth_threshold or recv_rate > self.bandwidth_threshold:
-                        await self._create_high_bandwidth_event(send_rate, recv_rate)
-            
-            self._last_net_stats = current_stats
-            
-        except Exception as e:
-            self.logger.debug(f"Bandwidth monitoring error: {e}")
-    
-    async def _create_high_bandwidth_event(self, send_rate: float, recv_rate: float):
-        """Create high bandwidth usage event"""
-        try:
-            send_mb = send_rate / (1024 * 1024)
-            recv_mb = recv_rate / (1024 * 1024)
-            
-            event = EventData(
-                event_type="Network",
-                event_action="Resource_Usage",
-                event_timestamp=datetime.now(),
-                severity="Medium",
-                agent_id=self.agent_id,
-                source_ip="0.0.0.0",
-                source_port=0,
-                destination_ip="0.0.0.0",
-                destination_port=0,
-                protocol="Bandwidth",
-                direction="Both",
-                description=f"🐧 LINUX HIGH BANDWIDTH: Send {send_mb:.1f}MB/s, Recv {recv_mb:.1f}MB/s",
-                raw_event_data={
-                    'platform': 'linux',
-                    'event_subtype': 'high_bandwidth_usage',
-                    'send_rate_mbps': send_mb,
-                    'recv_rate_mbps': recv_mb,
-                    'threshold_mbps': self.bandwidth_threshold / (1024 * 1024),
-                    'monitoring_method': 'psutil_net_io_counters'
-                }
-            )
-            
-            await self.add_event(event)
-            self.stats['high_bandwidth_events'] += 1
-            
-        except Exception as e:
-            self.logger.error(f"❌ High bandwidth event creation failed: {e}")
     
     def get_stats(self) -> Dict:
         """Get detailed Linux network collector statistics"""

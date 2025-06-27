@@ -1,9 +1,8 @@
 # agent/core/communication.py - FIXED Linux Communication Module
 """
 Linux Communication Manager - FIXED VERSION
-Handles communication with EDR server with proper class naming
+Handles communication with EDR server with proper imports - IMPORT ERROR FIXED
 """
-
 import aiohttp
 import asyncio
 import logging
@@ -14,10 +13,9 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any, Tuple
 from collections import deque
 from dataclasses import dataclass
-
 from agent.core.config_manager import ConfigManager
 from agent.schemas.agent_data import AgentRegistrationData, AgentHeartbeatData
-from agent.schemas.events import EventData, validate_event_for_database
+from agent.schemas.events import EventData
 
 @dataclass
 class ConnectionStats:
@@ -29,7 +27,7 @@ class ConnectionStats:
     last_request_time: Optional[datetime] = None
 
 class ServerCommunication:
-    """✅ FIXED: Server Communication with proper error handling"""
+    """✅ FIXED: Server Communication with proper imports - NO MORE IMPORT ERRORS"""
     
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
@@ -70,7 +68,7 @@ class ServerCommunication:
         self.logger.info(f"   📤 Individual threshold: {self.individual_threshold} events")
         if self.disable_batch_submission:
             self.logger.info(f"   🚫 Batch submission disabled - using individual only")
-    
+
     async def initialize(self):
         """✅ FIXED: Initialize with proper error handling"""
         try:
@@ -93,7 +91,7 @@ class ServerCommunication:
         except Exception as e:
             self.logger.error(f"❌ Communication initialization failed: {e}")
             self.offline_mode = True
-    
+
     async def _test_connection(self):
         """✅ FIXED: Test connection with proper error handling"""
         try:
@@ -110,7 +108,55 @@ class ServerCommunication:
         except Exception as e:
             self.logger.warning(f"⚠️ Server connection test failed: {e}")
             self.is_connected = False
-    
+
+    def _validate_event_for_database(self, event: EventData) -> tuple[bool, str]:
+        """✅ FIXED: Built-in event validation to replace missing import"""
+        try:
+            # Check required fields
+            if not event.agent_id:
+                return False, "Missing required field: agent_id"
+            
+            if not event.event_type:
+                return False, "Missing required field: event_type"
+            
+            if not event.event_action:
+                return False, "Missing required field: event_action"
+            
+            # Validate event_type (Linux - comprehensive list)
+            valid_event_types = [
+                "Process", "File", "Network", "Authentication", "System", 
+                "Procfs", "Sysfs", "Sysctl", "Kernel", "Container_Security",
+                "Service_Started", "Service_Stopped", "Service_Removed",
+                "System_Event", "System_Performance", "System_Security"
+            ]
+            if event.event_type not in valid_event_types:
+                return False, f"Invalid event_type: {event.event_type}. Must be one of {valid_event_types}"
+            
+            # Validate severity
+            valid_severities = ["Critical", "High", "Medium", "Low", "Info"]
+            if event.severity not in valid_severities:
+                return False, f"Invalid severity: {event.severity}. Must be one of {valid_severities}"
+            
+            # Validate threat_level if exists
+            if hasattr(event, 'threat_level'):
+                valid_threat_levels = ["None", "Suspicious", "Malicious"]
+                if event.threat_level not in valid_threat_levels:
+                    return False, f"Invalid threat_level: {event.threat_level}. Must be one of {valid_threat_levels}"
+            
+            # Validate risk_score if exists
+            if hasattr(event, 'risk_score'):
+                if not (0 <= event.risk_score <= 100):
+                    return False, f"Invalid risk_score: {event.risk_score}. Must be between 0 and 100"
+            
+            # Validate timestamp
+            if not hasattr(event, 'event_timestamp') or event.event_timestamp is None:
+                return False, "Missing required field: event_timestamp"
+            
+            return True, "Valid"
+            
+        except Exception as e:
+            return False, f"Validation error: {e}"
+
     async def register_agent(self, registration_data) -> Optional[Dict]:
         """✅ FIXED: Register agent with complete validation and duplicate handling"""
         try:
@@ -170,7 +216,7 @@ class ServerCommunication:
         except Exception as e:
             self.logger.error(f"❌ Agent registration error: {e}")
             return None
-    
+
     async def send_heartbeat(self, heartbeat_data: AgentHeartbeatData) -> Optional[Dict]:
         """Send heartbeat to server"""
         try:
@@ -193,7 +239,7 @@ class ServerCommunication:
                 'message': 'Heartbeat error',
                 'error': str(e)
             }
-    
+
     async def submit_event(self, event_data: EventData) -> Tuple[bool, Optional[Dict], Optional[str]]:
         """Submit single event to server with enhanced validation"""
         try:
@@ -250,7 +296,7 @@ class ServerCommunication:
         except Exception as e:
             self.logger.error(f"❌ Error submitting event: {e}")
             return False, None, str(e)
-    
+
     async def submit_event_batch(self, events: List[EventData]) -> Tuple[bool, Optional[Dict], Optional[str]]:
         """Submit batch of events to server with automatic fallback to individual submission"""
         try:
@@ -328,7 +374,7 @@ class ServerCommunication:
                 self.logger.info("🔄 Falling back to individual submissions due to exception...")
                 return await self._submit_events_individually(valid_events)
             return False, None, str(e)
-    
+
     async def _submit_events_individually(self, events: List[EventData]) -> Tuple[bool, Optional[Dict], Optional[str]]:
         """Submit events individually with improved rate limiting"""
         try:
@@ -372,7 +418,7 @@ class ServerCommunication:
         except Exception as e:
             self.logger.error(f"❌ Individual submission error: {e}")
             return False, None, str(e)
-    
+
     async def _make_request(self, method: str, url: str, payload: Optional[Dict] = None) -> Optional[Dict]:
         """✅ FIXED: Make HTTP request with comprehensive error handling and detailed logging"""
         if not self.session:
@@ -407,7 +453,7 @@ class ServerCommunication:
         
         self.logger.error(f"❌ All {max_retries} request attempts failed")
         return None
-    
+
     async def _handle_response(self, response) -> Optional[Dict]:
         """✅ FIXED: Handle HTTP response properly with detailed logging"""
         try:
@@ -452,7 +498,7 @@ class ServerCommunication:
         except Exception as e:
             self.logger.error(f"❌ Response handling error: {e}")
             return None
-    
+
     async def close(self):
         """Close communication session"""
         try:
@@ -461,7 +507,7 @@ class ServerCommunication:
                 self.logger.info("✅ Server communication closed")
         except Exception as e:
             self.logger.error(f"❌ Error closing communication: {e}")
-    
+
     def get_stats(self) -> Dict[str, Any]:
         """Get communication statistics"""
         return {
@@ -479,7 +525,7 @@ class ServerCommunication:
             'individual_threshold': self.individual_threshold,
             'submission_strategy': 'individual' if self.individual_threshold > 0 else 'batch'
         }
-    
+
     def is_online(self) -> bool:
         """Check if communication is online"""
         return not self.offline_mode and self.is_connected
@@ -527,7 +573,7 @@ class ServerCommunication:
         except Exception as e:
             self.logger.error(f"❌ Server connection test failed: {e}")
             return False
-    
+
     async def test_batch_endpoint(self) -> bool:
         """Test batch endpoint specifically"""
         try:
@@ -611,11 +657,3 @@ class ServerCommunication:
         except Exception as e:
             self.logger.error(f"❌ Test event submission error: {e}")
             return False
-
-# Backward compatibility - also provide the enhanced version
-class EnhancedParallelCommunication(ServerCommunication):
-    """Enhanced version extends the base ServerCommunication"""
-    
-    def __init__(self, config_manager: ConfigManager):
-        super().__init__(config_manager)
-        self.logger.info("🚀 Enhanced Parallel Communication mode enabled")

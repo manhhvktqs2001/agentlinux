@@ -1,7 +1,7 @@
 # agent/core/event_processor.py - FIXED Linux Event Processor
 """
-Linux Event Processor - FIXED VERSION  
-Process and submit events to EDR server with proper imports
+Linux Event Processor - FIXED VERSION WITH PROPER CLEANUP
+Process and submit events to EDR server with proper task management
 """
 
 import asyncio
@@ -15,7 +15,7 @@ from collections import deque, defaultdict
 from dataclasses import dataclass, field
 
 from agent.core.config_manager import ConfigManager
-from agent.core.communication import ServerCommunication  # FIXED IMPORT
+from agent.core.communication import ServerCommunication
 from agent.schemas.events import EventData
 
 @dataclass
@@ -31,7 +31,7 @@ class ProcessingStats:
 
 class EventProcessor:
     """
-    Linux Event Processor - FIXED VERSION
+    Linux Event Processor - FIXED VERSION WITH PROPER CLEANUP
     Handles event processing and submission to server
     """
     
@@ -56,6 +56,7 @@ class EventProcessor:
         # Processing state
         self.is_running = False
         self.agent_id: Optional[str] = None
+        self.shutdown_event = asyncio.Event()  # ✅ FIXED: Add shutdown event
         
         # Worker tasks
         self.worker_tasks = []
@@ -81,24 +82,35 @@ class EventProcessor:
         self.logger.info(f"Agent ID set for event processing: {agent_id}")
     
     async def start(self):
-        """Start event processor"""
+        """✅ FIXED: Start event processor with proper task management"""
         try:
             self.is_running = True
+            self.shutdown_event.clear()  # ✅ FIXED: Clear shutdown event
             
             self.logger.info("🚀 Starting Linux Event Processor...")
             
             # Start worker tasks
             for worker_id in range(self.num_workers):
-                task = asyncio.create_task(self._worker_loop(worker_id))
+                task = asyncio.create_task(
+                    self._worker_loop(worker_id),
+                    name=f"worker-{worker_id}"  # ✅ FIXED: Add task names
+                )
                 self.worker_tasks.append(task)
             
             # Start batch processors
             for processor_id in range(self.num_batch_processors):
-                task = asyncio.create_task(self._batch_processor_loop(processor_id))
+                task = asyncio.create_task(
+                    self._batch_processor_loop(processor_id),
+                    name=f"batch-processor-{processor_id}"  # ✅ FIXED: Add task names
+                )
                 self.batch_processor_tasks.append(task)
             
             # Start monitoring task
-            asyncio.create_task(self._monitoring_loop())
+            monitoring_task = asyncio.create_task(
+                self._monitoring_loop(),
+                name="event-processor-monitor"  # ✅ FIXED: Add task name
+            )
+            self.worker_tasks.append(monitoring_task)
             
             self.logger.info(f"✅ Event Processor started with {self.num_workers} workers")
             
@@ -107,24 +119,42 @@ class EventProcessor:
             raise
     
     async def stop(self):
-        """Stop event processor gracefully"""
+        """✅ FIXED: Stop event processor gracefully with proper cleanup"""
         try:
             self.logger.info("🛑 Stopping Linux Event Processor...")
             
+            # Signal shutdown
             self.is_running = False
+            self.shutdown_event.set()
             
-            # Cancel worker tasks
-            for task in self.worker_tasks + self.batch_processor_tasks:
-                if not task.done():
-                    task.cancel()
-            
-            # Wait for tasks to complete
-            if self.worker_tasks + self.batch_processor_tasks:
-                await asyncio.gather(*self.worker_tasks, *self.batch_processor_tasks, 
-                                   return_exceptions=True)
+            # ✅ FIXED: Cancel tasks gracefully
+            all_tasks = self.worker_tasks + self.batch_processor_tasks
+            if all_tasks:
+                self.logger.info(f"🧹 Cancelling {len(all_tasks)} processor tasks...")
+                
+                # Cancel all tasks
+                for task in all_tasks:
+                    if not task.done():
+                        task.cancel()
+                
+                # Wait for tasks to complete with timeout
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*all_tasks, return_exceptions=True),
+                        timeout=10.0  # 10 second timeout
+                    )
+                    self.logger.info("✅ All processor tasks stopped successfully")
+                except asyncio.TimeoutError:
+                    self.logger.warning("⚠️ Some processor tasks took too long to stop")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Error stopping processor tasks: {e}")
             
             # Process remaining events
             await self._flush_queues()
+            
+            # Clear task lists
+            self.worker_tasks.clear()
+            self.batch_processor_tasks.clear()
             
             self.logger.info("✅ Event Processor stopped")
             
@@ -142,29 +172,30 @@ class EventProcessor:
                 self.logger.error("❌ Event missing agent_id")
                 return
             
-            # Add to queue
-            try:
-                self.event_queue.put_nowait(event_data)
-                self.stats.events_received += 1
-                
-            except asyncio.QueueFull:
-                self.logger.warning("⚠️ Event queue full - dropping event")
-                self.stats.events_failed += 1
+            # Add to queue if not shutting down
+            if not self.shutdown_event.is_set():
+                try:
+                    self.event_queue.put_nowait(event_data)
+                    self.stats.events_received += 1
+                    
+                except asyncio.QueueFull:
+                    self.logger.warning("⚠️ Event queue full - dropping event")
+                    self.stats.events_failed += 1
             
         except Exception as e:
             self.logger.error(f"❌ Error adding event: {e}")
     
     async def _worker_loop(self, worker_id: int):
-        """Worker loop for event processing"""
+        """✅ FIXED: Worker loop with proper shutdown handling"""
         self.logger.info(f"👷 Worker {worker_id} started")
         
         batch_buffer = []
         last_batch_time = time.time()
         
         try:
-            while self.is_running:
+            while self.is_running and not self.shutdown_event.is_set():
                 try:
-                    # Get event from queue
+                    # Get event from queue with timeout
                     try:
                         event = await asyncio.wait_for(
                             self.event_queue.get(),
@@ -183,7 +214,7 @@ class EventProcessor:
                     should_send_batch = (
                         len(batch_buffer) >= self.batch_size or
                         (batch_buffer and (current_time - last_batch_time) >= self.batch_timeout) or
-                        not self.is_running
+                        self.shutdown_event.is_set()  # ✅ FIXED: Send on shutdown
                     )
                     
                     if should_send_batch and batch_buffer:
@@ -192,6 +223,9 @@ class EventProcessor:
                         batch_buffer.clear()
                         last_batch_time = current_time
                 
+                except asyncio.CancelledError:
+                    self.logger.info(f"👷 Worker {worker_id} cancelled")
+                    break
                 except Exception as e:
                     self.logger.error(f"❌ Worker {worker_id} error: {e}")
                     await asyncio.sleep(1)
@@ -208,7 +242,7 @@ class EventProcessor:
     async def _send_batch_to_processor(self, worker_id: int, batch: List[EventData]):
         """Send batch to batch processor"""
         try:
-            if not batch:
+            if not batch or self.shutdown_event.is_set():
                 return
             
             batch_item = {
@@ -218,37 +252,49 @@ class EventProcessor:
                 'timestamp': time.time()
             }
             
-            await self.batch_queue.put(batch_item)
+            # Try to put in batch queue, but don't wait if shutting down
+            try:
+                if not self.shutdown_event.is_set():
+                    await asyncio.wait_for(
+                        self.batch_queue.put(batch_item),
+                        timeout=1.0
+                    )
+            except asyncio.TimeoutError:
+                self.logger.warning(f"⚠️ Batch queue timeout for worker {worker_id}")
             
         except Exception as e:
             self.logger.error(f"❌ Error sending batch from worker {worker_id}: {e}")
     
     async def _batch_processor_loop(self, processor_id: int):
-        """Batch processor loop"""
+        """✅ FIXED: Batch processor loop with proper shutdown handling"""
         self.logger.info(f"📦 Batch processor {processor_id} started")
         
         try:
-            while self.is_running:
+            while self.is_running and not self.shutdown_event.is_set():
                 try:
-                    # Get batch from queue
-                    batch_item = await asyncio.wait_for(
-                        self.batch_queue.get(),
-                        timeout=1.0
-                    )
-                    
-                    # Process batch
-                    success = await self._process_batch(processor_id, batch_item)
-                    
-                    if success:
-                        self.stats.events_sent += batch_item['batch_size']
-                        self.logger.debug(f"📦 Processor {processor_id}: Sent {batch_item['batch_size']} events")
-                    else:
-                        self.stats.events_failed += batch_item['batch_size']
-                        self.logger.warning(f"⚠️ Processor {processor_id}: Batch failed")
+                    # Get batch from queue with timeout
+                    try:
+                        batch_item = await asyncio.wait_for(
+                            self.batch_queue.get(),
+                            timeout=1.0
+                        )
+                        
+                        # Process batch
+                        success = await self._process_batch(processor_id, batch_item)
+                        
+                        if success:
+                            self.stats.events_sent += batch_item['batch_size']
+                            self.logger.debug(f"📦 Processor {processor_id}: Sent {batch_item['batch_size']} events")
+                        else:
+                            self.stats.events_failed += batch_item['batch_size']
+                            self.logger.warning(f"⚠️ Processor {processor_id}: Batch failed")
+                            
+                    except asyncio.TimeoutError:
+                        continue  # No batch available
                 
-                except asyncio.TimeoutError:
-                    continue  # No batch available
-                
+                except asyncio.CancelledError:
+                    self.logger.info(f"📦 Batch processor {processor_id} cancelled")
+                    break
                 except Exception as e:
                     self.logger.error(f"❌ Batch processor {processor_id} error: {e}")
                     await asyncio.sleep(1)
@@ -297,9 +343,8 @@ class EventProcessor:
             # Log validation results
             if invalid_events:
                 self.logger.error(f"❌ Processor {processor_id}: Found {len(invalid_events)} invalid events:")
-                for i, event, reason in invalid_events:
+                for i, event, reason in invalid_events[:3]:  # Only log first 3
                     self.logger.error(f"   Event {i}: {reason}")
-                    self.logger.error(f"   Event type: {event.event_type}, action: {event.event_action}")
             
             if not valid_events:
                 self.logger.error(f"❌ Processor {processor_id}: No valid events to submit")
@@ -335,19 +380,16 @@ class EventProcessor:
                 else:
                     # Real failure
                     self.logger.warning(f"⚠️ Processor {processor_id}: Batch submission failed: {error}")
-                    self.logger.warning(f"⚠️ Processor {processor_id}: Response: {response}")
                     return False
             
         except Exception as e:
             self.logger.error(f"❌ Processor {processor_id}: Batch processing error: {e}")
-            import traceback
-            self.logger.error(f"❌ Processor {processor_id}: Full traceback: {traceback.format_exc()}")
             return False
     
     async def _monitoring_loop(self):
-        """Monitor event processor performance"""
+        """✅ FIXED: Monitor event processor performance with shutdown handling"""
         try:
-            while self.is_running:
+            while self.is_running and not self.shutdown_event.is_set():
                 try:
                     # Update statistics
                     self._update_stats()
@@ -356,8 +398,19 @@ class EventProcessor:
                     if int(time.time()) % 120 == 0:
                         self._log_stats()
                     
-                    await asyncio.sleep(30)  # Check every 30 seconds
+                    # Wait with cancellation check
+                    try:
+                        await asyncio.wait_for(
+                            self.shutdown_event.wait(),
+                            timeout=30.0
+                        )
+                        break  # Shutdown requested
+                    except asyncio.TimeoutError:
+                        continue  # Normal timeout, continue monitoring
                     
+                except asyncio.CancelledError:
+                    self.logger.info("🛑 Monitoring loop cancelled")
+                    break
                 except Exception as e:
                     self.logger.error(f"❌ Monitoring error: {e}")
                     await asyncio.sleep(30)
@@ -398,32 +451,45 @@ class EventProcessor:
             self.logger.debug(f"Error logging stats: {e}")
     
     async def _flush_queues(self):
-        """Flush remaining events from queues"""
+        """✅ FIXED: Flush remaining events from queues with timeout"""
         try:
             self.logger.info("🔄 Flushing event queues...")
             
             events_flushed = 0
+            flush_timeout = 5.0  # 5 second timeout for flushing
             
-            # Flush event queue
-            while not self.event_queue.empty():
+            # Flush event queue with timeout
+            start_time = time.time()
+            while not self.event_queue.empty() and (time.time() - start_time) < flush_timeout:
                 try:
                     event = self.event_queue.get_nowait()
                     # Try to send immediately
                     success, _, _ = await self.communication.submit_event(event)
                     if success:
                         events_flushed += 1
-                except:
+                except asyncio.QueueEmpty:
+                    break
+                except Exception as e:
+                    self.logger.debug(f"Error flushing event: {e}")
                     break
             
-            # Flush batch queue
-            while not self.batch_queue.empty():
+            # Flush batch queue with timeout
+            start_time = time.time()
+            while not self.batch_queue.empty() and (time.time() - start_time) < flush_timeout:
                 try:
                     batch_item = self.batch_queue.get_nowait()
                     for event in batch_item['batch']:
-                        success, _, _ = await self.communication.submit_event(event)
-                        if success:
-                            events_flushed += 1
-                except:
+                        try:
+                            success, _, _ = await self.communication.submit_event(event)
+                            if success:
+                                events_flushed += 1
+                        except Exception as e:
+                            self.logger.debug(f"Error flushing batch event: {e}")
+                            break
+                except asyncio.QueueEmpty:
+                    break
+                except Exception as e:
+                    self.logger.debug(f"Error flushing batch: {e}")
                     break
             
             self.logger.info(f"🔄 Flushed {events_flushed} events")
