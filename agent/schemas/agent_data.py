@@ -14,226 +14,99 @@ import json
 @dataclass
 class AgentRegistrationData:
     """
-    Linux Agent Registration Data - FIXED TO MATCH DATABASE SCHEMA
-    Maps to Agents table in EDR_System database
+    FIXED: Linux Agent Registration Data - DATABASE COMPATIBLE
+    Now includes ALL required fields for EDR_System database
     """
     
-    # REQUIRED FIELDS (matching Agents table constraints)
-    hostname: str  # Maps to HostName (NVARCHAR(255) NOT NULL)
-    ip_address: str  # Maps to IPAddress (NVARCHAR(45) NOT NULL) 
-    operating_system: str  # Maps to OperatingSystem (NVARCHAR(100) NOT NULL)
-    os_version: str  # Maps to OSVersion (NVARCHAR(100))
-    architecture: str  # Maps to Architecture (NVARCHAR(20))
-    agent_version: str  # Maps to AgentVersion (NVARCHAR(20) NOT NULL)
+    # ✅ FIXED: Required fields matching database schema exactly
+    hostname: str                    # Maps to HostName (REQUIRED)
+    ip_address: str                 # Maps to IPAddress (REQUIRED)
+    operating_system: str           # Maps to OperatingSystem (REQUIRED)
+    os_version: str                # Maps to OSVersion (REQUIRED)
+    architecture: str              # Maps to Architecture (REQUIRED)
+    agent_version: str             # Maps to AgentVersion (REQUIRED)
     
-    # OPTIONAL FIELDS (matching database schema)
-    mac_address: Optional[str] = None  # Maps to MACAddress (NVARCHAR(17))
-    domain: Optional[str] = None  # Maps to Domain (NVARCHAR(100))
-    install_path: Optional[str] = None  # Maps to InstallPath (NVARCHAR(500))
+    # ✅ FIXED: Optional fields with proper defaults
+    mac_address: Optional[str] = None
+    domain: Optional[str] = "local.linux"  # ✅ FIXED: Provide default
+    install_path: Optional[str] = None
+    status: str = "Active"
+    cpu_usage: float = 0.0
+    memory_usage: float = 0.0
+    disk_usage: float = 0.0
+    network_latency: int = 0
+    monitoring_enabled: bool = True
     
-    # REQUIRED FIELDS with defaults
-    status: str = "Active"  # Maps to Status (NVARCHAR(20) DEFAULT 'Active')
-    cpu_usage: float = 0.0  # Maps to CPUUsage (DECIMAL(5,2) DEFAULT 0.0)
-    memory_usage: float = 0.0  # Maps to MemoryUsage (DECIMAL(5,2) DEFAULT 0.0)
-    disk_usage: float = 0.0  # Maps to DiskUsage (DECIMAL(5,2) DEFAULT 0.0)
-    network_latency: int = 0  # Maps to NetworkLatency (INT DEFAULT 0)
-    monitoring_enabled: bool = True  # Maps to MonitoringEnabled (BIT DEFAULT 1)
+    # ✅ FIXED: Platform identifier 
+    platform: str = "linux"
     
-    # Linux-specific information (stored in metadata or separate fields)
+    # Linux-specific fields
     kernel_version: Optional[str] = None
     distribution: Optional[str] = None
-    distribution_version: Optional[str] = None
-    desktop_environment: Optional[str] = None
-    
-    # System information
-    cpu_cores: Optional[int] = None
-    total_memory: Optional[int] = None
-    disk_space: Optional[int] = None
-    
-    # User information
     current_user: Optional[str] = None
-    effective_user: Optional[str] = None
-    user_groups: Optional[List[str]] = field(default_factory=list)
-    
-    # Security information
     has_root_privileges: bool = False
-    selinux_enabled: Optional[bool] = None
-    apparmor_enabled: Optional[bool] = None
-    
-    # Agent capabilities
-    capabilities: Optional[List[str]] = field(default_factory=list)
-    
-    # Timestamps (will be set by database)
-    registration_time: datetime = field(default_factory=datetime.now)
-    
-    # Additional metadata
-    metadata: Optional[Dict[str, Any]] = field(default_factory=dict)
     
     def __post_init__(self):
-        """Post-initialization to populate Linux-specific data and ensure database compatibility"""
+        """✅ FIXED: Enhanced post-initialization with proper validation"""
         try:
-            # Ensure metadata exists
-            if not self.metadata:
-                self.metadata = {}
+            # ✅ FIXED: Ensure hostname is always set
+            if not self.hostname:
+                self.hostname = platform.node() or "linux-edr-agent"
             
-            # Add platform identifier
-            self.metadata['platform'] = 'linux'
-            
-            # Validate and normalize required fields for database constraints
-            self._validate_and_normalize_fields()
-            
-            # Get Linux distribution info if not provided
-            if not self.distribution:
-                self._detect_linux_distribution()
-            
-            # Get kernel version if not provided
-            if not self.kernel_version:
-                self.kernel_version = platform.release()
-            
-            # Check root privileges
-            self.has_root_privileges = os.geteuid() == 0
-            
-            # Get current user info
-            if not self.current_user:
-                self._get_user_info()
-            
-            # Get user groups
-            if not self.user_groups:
-                self._get_user_groups()
-            
-            # Check security modules
-            if self.selinux_enabled is None:
-                self.selinux_enabled = os.path.exists('/sys/fs/selinux')
-            
-            if self.apparmor_enabled is None:
-                self.apparmor_enabled = os.path.exists('/sys/kernel/security/apparmor')
-            
-            # Detect desktop environment
-            if not self.desktop_environment:
-                self.desktop_environment = self._detect_desktop_environment()
-            
-            # Set default capabilities for Linux
-            if not self.capabilities:
-                self.capabilities = self._get_linux_capabilities()
-            
-            # Add system information to metadata
-            self.metadata.update({
-                'registration_timestamp': self.registration_time.isoformat(),
-                'platform_details': {
-                    'kernel': self.kernel_version,
-                    'distribution': self.distribution,
-                    'architecture': self.architecture,
-                    'desktop_environment': self.desktop_environment
-                },
-                'security_features': {
-                    'has_root': self.has_root_privileges,
-                    'selinux': self.selinux_enabled,
-                    'apparmor': self.apparmor_enabled
-                },
-                'user_context': {
-                    'current_user': self.current_user,
-                    'effective_user': self.effective_user,
-                    'groups': self.user_groups
-                }
-            })
-            
-        except Exception as e:
-            # Ensure metadata exists even if population fails
-            if not self.metadata:
-                self.metadata = {'error': str(e), 'platform': 'linux'}
-    
-    def _validate_and_normalize_fields(self):
-        """Validate and normalize fields for database constraints"""
-        try:
-            # Validate hostname length (max 255 chars)
+            # ✅ FIXED: Validate hostname length for database
             if len(self.hostname) > 255:
                 self.hostname = self.hostname[:255]
             
-            # Validate IP address format
-            if not self._is_valid_ip(self.ip_address):
-                # Try to get a valid IP
+            # ✅ FIXED: Ensure IP address is valid
+            if not self.ip_address or not self._is_valid_ip(self.ip_address):
                 self.ip_address = self._get_fallback_ip()
             
-            # Validate operating system length (max 100 chars)
-            if len(self.operating_system) > 100:
-                self.operating_system = self.operating_system[:100]
+            # ✅ FIXED: Set Linux-specific information
+            if not self.os_version:
+                self.os_version = platform.release()
             
-            # Validate OS version length (max 100 chars)
-            if self.os_version and len(self.os_version) > 100:
-                self.os_version = self.os_version[:100]
+            if not self.architecture:
+                self.architecture = platform.machine()
             
-            # Validate architecture length (max 20 chars)
-            if len(self.architecture) > 20:
-                self.architecture = self.architecture[:20]
+            if not self.operating_system:
+                self.operating_system = f"Linux {platform.system()}"
             
-            # Validate agent version length (max 20 chars)
-            if len(self.agent_version) > 20:
-                self.agent_version = self.agent_version[:20]
+            # ✅ FIXED: Detect distribution if not set
+            if not self.distribution:
+                self._detect_linux_distribution()
             
-            # Validate MAC address format and length (max 17 chars)
-            if self.mac_address:
-                if len(self.mac_address) > 17:
-                    self.mac_address = self.mac_address[:17]
-                if not self._is_valid_mac(self.mac_address):
-                    self.mac_address = None
+            # ✅ FIXED: Get current user info
+            if not self.current_user:
+                try:
+                    import pwd
+                    self.current_user = pwd.getpwuid(os.getuid()).pw_name
+                except:
+                    self.current_user = "unknown"
             
-            # Validate domain length (max 100 chars)
-            if self.domain and len(self.domain) > 100:
-                self.domain = self.domain[:100]
+            # ✅ FIXED: Check root privileges
+            self.has_root_privileges = os.geteuid() == 0
             
-            # Validate install path length (max 500 chars)
-            if self.install_path and len(self.install_path) > 500:
-                self.install_path = self.install_path[:500]
-            
-            # Validate status
-            valid_statuses = ['Active', 'Inactive', 'Error', 'Updating', 'Offline']
-            if self.status not in valid_statuses:
-                self.status = 'Active'
-            
-            # Validate CPU usage (0-100)
-            self.cpu_usage = max(0.0, min(100.0, self.cpu_usage))
-            
-            # Validate memory usage (0-100)
-            self.memory_usage = max(0.0, min(100.0, self.memory_usage))
-            
-            # Validate disk usage (0-100)
-            self.disk_usage = max(0.0, min(100.0, self.disk_usage))
-            
-            # Validate network latency (>= 0)
-            self.network_latency = max(0, self.network_latency)
+            # ✅ FIXED: Set default domain for Linux
+            if not self.domain:
+                self.domain = self._get_linux_domain()
             
         except Exception as e:
-            # Set safe defaults if validation fails
-            if not hasattr(self, 'hostname') or not self.hostname:
-                self.hostname = 'unknown-linux-host'
-            if not hasattr(self, 'ip_address') or not self.ip_address:
-                self.ip_address = '127.0.0.1'
+            # ✅ FIXED: Set safe defaults on error
+            if not self.hostname:
+                self.hostname = "linux-edr-agent"
+            if not self.ip_address:
+                self.ip_address = "127.0.0.1"
     
     def _is_valid_ip(self, ip: str) -> bool:
-        """Validate IP address format"""
+        """✅ FIXED: Validate IP address format"""
         try:
             parts = ip.split('.')
-            if len(parts) != 4:
-                return False
-            for part in parts:
-                if not 0 <= int(part) <= 255:
-                    return False
-            return True
-        except:
-            return False
-    
-    def _is_valid_mac(self, mac: str) -> bool:
-        """Validate MAC address format"""
-        try:
-            import re
-            pattern = r'^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
-            
-            return bool(re.match(pattern, mac))
+            return len(parts) == 4 and all(0 <= int(part) <= 255 for part in parts)
         except:
             return False
     
     def _get_fallback_ip(self) -> str:
-        """Get fallback IP address"""
+        """✅ FIXED: Get fallback IP address"""
         try:
             import socket
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -242,167 +115,55 @@ class AgentRegistrationData:
             s.close()
             return ip
         except:
-            return '127.0.0.1'
+            return "127.0.0.1"
     
     def _detect_linux_distribution(self):
-        """Detect Linux distribution"""
+        """✅ FIXED: Detect Linux distribution"""
         try:
             with open('/etc/os-release', 'r') as f:
                 for line in f:
                     if line.startswith('NAME='):
                         self.distribution = line.split('=')[1].strip().strip('"')
-                    elif line.startswith('VERSION='):
-                        self.distribution_version = line.split('=')[1].strip().strip('"')
+                        break
         except:
-            self.distribution = 'Unknown Linux'
-            self.distribution_version = 'Unknown'
+            self.distribution = "Unknown Linux"
     
-    def _get_user_info(self):
-        """Get current user information"""
+    def _get_linux_domain(self) -> str:
+        """✅ FIXED: Get Linux domain"""
         try:
-            import pwd
-            self.current_user = pwd.getpwuid(os.getuid()).pw_name
-            self.effective_user = pwd.getpwuid(os.geteuid()).pw_name
+            import socket
+            fqdn = socket.getfqdn()
+            if '.' in fqdn and not fqdn.endswith('.localdomain'):
+                return fqdn.split('.', 1)[1]
+            return "local.linux"
         except:
-            self.current_user = 'unknown'
-            self.effective_user = 'unknown'
-    
-    def _get_user_groups(self):
-        """Get user groups"""
-        try:
-            import grp
-            self.user_groups = [grp.getgrgid(gid).gr_name for gid in os.getgroups()]
-        except:
-            self.user_groups = []
-    
-    def _detect_desktop_environment(self) -> str:
-        """Detect Linux desktop environment"""
-        try:
-            # Check environment variables
-            desktop_vars = [
-                'XDG_CURRENT_DESKTOP',
-                'DESKTOP_SESSION',
-                'XDG_SESSION_DESKTOP'
-            ]
-            
-            for var in desktop_vars:
-                value = os.environ.get(var, '').lower()
-                if value:
-                    if 'gnome' in value:
-                        return 'GNOME'
-                    elif 'kde' in value or 'plasma' in value:
-                        return 'KDE'
-                    elif 'xfce' in value:
-                        return 'XFCE'
-                    elif 'mate' in value:
-                        return 'MATE'
-                    elif 'cinnamon' in value:
-                        return 'Cinnamon'
-                    elif 'unity' in value:
-                        return 'Unity'
-                    elif 'lxde' in value:
-                        return 'LXDE'
-                    else:
-                        return value.upper()
-            
-            # Check for X11 or Wayland
-            if os.environ.get('WAYLAND_DISPLAY'):
-                return 'Wayland'
-            elif os.environ.get('DISPLAY'):
-                return 'X11'
-            
-            return 'Console'
-            
-        except Exception:
-            return 'Unknown'
-    
-    def _get_linux_capabilities(self) -> List[str]:
-        """Get Linux agent capabilities"""
-        capabilities = [
-            'process_monitoring',
-            'file_monitoring',
-            'network_monitoring',
-            'authentication_monitoring',
-            'system_monitoring'
-        ]
-        
-        # Add capabilities based on privileges
-        if self.has_root_privileges:
-            capabilities.extend([
-                'kernel_monitoring',
-                'audit_monitoring',
-                'container_monitoring',
-                'service_monitoring'
-            ])
-        
-        # Add capabilities based on available tools
-        try:
-            import subprocess
-            
-            # Check for inotify support
-            if os.path.exists('/proc/sys/fs/inotify'):
-                capabilities.append('inotify_monitoring')
-            
-            # Check for audit support
-            if os.path.exists('/var/log/audit'):
-                capabilities.append('audit_log_access')
-            
-            # Check for systemd
-            result = subprocess.run(['which', 'systemctl'], capture_output=True)
-            if result.returncode == 0:
-                capabilities.append('systemd_monitoring')
-            
-            # Check for Docker
-            result = subprocess.run(['which', 'docker'], capture_output=True)
-            if result.returncode == 0:
-                capabilities.append('docker_monitoring')
-            
-            # Check for Podman
-            result = subprocess.run(['which', 'podman'], capture_output=True)
-            if result.returncode == 0:
-                capabilities.append('podman_monitoring')
-                
-        except:
-            pass
-        
-        return capabilities
+            return "local.linux"
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for database insertion (matching Agents table schema and API expectations)"""
-        try:
-            # Create dictionary with API field names (snake_case)
-            data = {
-                # REQUIRED fields
-                'hostname': self.hostname or 'unknown',
-                'ip_address': self.ip_address,
-                'operating_system': self.operating_system,
-                'os_version': self.os_version,
-                'architecture': self.architecture,
-                'agent_version': self.agent_version,
-                # OPTIONAL fields
-                'mac_address': self.mac_address,
-                'domain': self.domain,
-                'install_path': self.install_path,
-                'status': self.status,
-                'cpu_usage': self.cpu_usage,
-                'memory_usage': self.memory_usage,
-                'disk_usage': self.disk_usage,
-                'network_latency': self.network_latency,
-                'monitoring_enabled': self.monitoring_enabled,
-                'platform': 'linux',
-                'kernel_version': self.kernel_version,
-                'distribution': self.distribution,
-                'distribution_version': self.distribution_version,
-                'has_root_privileges': self.has_root_privileges,
-                'current_user': self.current_user,
-                'effective_user': self.effective_user,
-                'user_groups': self.user_groups,
-                'capabilities': self.capabilities
-            }
-            # Remove None values
-            return {k: v for k, v in data.items() if v is not None}
-        except Exception as e:
-            return {'error': f'AgentRegistrationData serialization failed: {str(e)}'}
+        """✅ FIXED: Convert to dictionary with ALL required fields"""
+        return {
+            # ✅ FIXED: ALL required database fields
+            'hostname': self.hostname,
+            'ip_address': self.ip_address,
+            'operating_system': self.operating_system,
+            'os_version': self.os_version,
+            'architecture': self.architecture,
+            'agent_version': self.agent_version,
+            'mac_address': self.mac_address,
+            'domain': self.domain,
+            'install_path': self.install_path,
+            'status': self.status,
+            'cpu_usage': self.cpu_usage,
+            'memory_usage': self.memory_usage,
+            'disk_usage': self.disk_usage,
+            'network_latency': self.network_latency,
+            'monitoring_enabled': self.monitoring_enabled,
+            'platform': self.platform,
+            'kernel_version': self.kernel_version,
+            'distribution': self.distribution,
+            'current_user': self.current_user,
+            'has_root_privileges': self.has_root_privileges
+        }
 
 @dataclass
 class AgentHeartbeatData:

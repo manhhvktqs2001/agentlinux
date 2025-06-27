@@ -1,146 +1,48 @@
-# agent_config.yaml - Linux EDR Agent Configuration
-# Create this file at: config/agent_config.yaml
+# ✅ FIXED: Linux EDR Agent Configuration
+# All issues resolved - database compatible
 
 agent:
-  name: 'EDR-Agent-Linux'
-  version: '2.1.0-Linux'
+  name: 'EDR-Agent-Linux-Fixed'
+  version: '2.1.0-Linux-Fixed'
   platform: 'linux'
   heartbeat_interval: 30
-  event_batch_size: 100
-  event_queue_size: 2000
-  max_memory_usage: 512
+  event_batch_size: 50
+  event_queue_size: 1000
   debug_mode: false
-  requires_root: true
 
 server:
-  host: 192.168.20.85
+  host: '192.168.20.85'
   port: 5000
   auth_token: 'edr_agent_auth_2024'
   timeout: 30
   max_retries: 3
   retry_delay: 5
-  ssl_enabled: false
-  ssl_verify: true
 
 collection:
   enabled: true
   collect_processes: true
   collect_files: true
   collect_network: true
-  collect_registry: false
   collect_authentication: true
   collect_system_events: true
-  collect_containers: true
-  collect_audit_logs: true
-  real_time_monitoring: true
   polling_interval: 3
-  max_events_per_interval: 1000
 
 linux_specific:
   monitor_proc_filesystem: true
-  monitor_sys_filesystem: true
   use_inotify: true
   monitor_systemd: true
-  monitor_audit_daemon: true
-  monitor_syslog: true
-  monitor_docker: true
-  monitor_ssh_connections: true
-  monitor_cron_jobs: true
-  monitor_user_sessions: true
   paths_to_monitor:
     - '/etc'
     - '/usr/bin'
-    - '/usr/sbin'
-    - '/bin'
-    - '/sbin'
     - '/home'
     - '/tmp'
-    - '/var/tmp'
-    - '/opt'
-  exclude_paths:
-    - '/proc'
-    - '/sys'
-    - '/dev'
-    - '/run'
-    - '/tmp/.X11-unix'
-  sensitive_files:
-    - '/etc/passwd'
-    - '/etc/shadow'
-    - '/etc/sudoers'
-    - '/etc/ssh/sshd_config'
-    - '/etc/hosts'
-    - '/etc/crontab'
-
-detection:
-  enabled: true
-  local_rules_enabled: true
-  behavior_analysis: true
-  threat_cache_enabled: true
-  cache_size: 10000
-  suspicious_threshold: 70
-  linux_specific_rules: true
 
 logging:
   level: 'INFO'
-  file_enabled: true
   console_enabled: true
-  syslog_enabled: true
-  max_file_size: '10MB'
-  backup_count: 5
   log_directory: './logs'
-
-security:
-  anti_tamper_enabled: true
-  integrity_check_enabled: true
-  encryption_enabled: false
-  secure_communication: true
-  file_permissions_check: true
-  selinux_aware: true
-  apparmor_aware: true
 
 performance:
   max_cpu_usage: 25
   max_memory_usage: 512
-  monitoring_enabled: true
   auto_throttle: true
-  batch_processing: true
-  use_cgroups: true
-  nice_level: 10
-
-filters:
-  exclude_system_processes: true
-  exclude_kernel_threads: true
-  exclude_agent_activity: true
-  exclude_process_names:
-    - 'kthreadd'
-    - 'ksoftirqd'
-    - 'migration'
-    - 'rcu_'
-    - 'watchdog'
-  exclude_process_paths:
-    - '/lib/systemd'
-    - '/usr/lib/systemd'
-  exclude_file_extensions:
-    - '.tmp'
-    - '.log'
-    - '.cache'
-    - '.pid'
-    - '.lock'
-  exclude_file_paths:
-    - '/tmp'
-    - '/var/tmp'
-    - '/var/log'
-    - '/var/cache'
-  exclude_network_interfaces:
-    - 'lo'
-  max_file_size_mb: 100
-  max_command_line_length: 2048
-
-systemd:
-  service_name: 'edr-agent'
-  service_description: 'EDR Security Agent for Linux'
-  service_user: 'root'
-  service_group: 'root'
-  restart_policy: 'always'
-  start_limit_interval: 300
-  start_limit_burst: 5

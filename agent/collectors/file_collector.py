@@ -656,6 +656,7 @@ class LinuxFileCollector(LinuxBaseCollector):
                 event_action=EventAction.RESOURCE_USAGE,
                 event_timestamp=datetime.now(),
                 severity="Info",
+                agent_id=self.agent_id,
                 description=f"🐧 LINUX FILE SYSTEM SUMMARY: {total_files} files monitored",
                 raw_event_data={
                     'platform': 'linux',

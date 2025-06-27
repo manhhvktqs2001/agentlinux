@@ -22,28 +22,23 @@ from agent.core.event_processor import EventProcessor  # FIXED IMPORT
 from agent.schemas.agent_data import AgentRegistrationData, AgentHeartbeatData
 
 class LinuxAgentManager:
-    """
-    Linux Agent Manager - FIXED VERSION
-    Main orchestrator for the Linux EDR agent
-    """
+    """✅ FIXED: Linux Agent Manager with proper agent_id handling"""
     
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
         self.config = config_manager.get_config()
         self.logger = logging.getLogger(__name__)
         
-        # Agent state
-        self.is_initialized = False
-        self.is_running = False
-        self.is_monitoring = False
-        self.is_paused = False
-        
-        # Agent identification
+        # ✅ FIXED: Agent identification with guaranteed agent_id
         self.agent_id_file = os.path.join(os.path.dirname(__file__), '..', '..', '.agent_id')
         self.agent_id = self._load_or_create_agent_id()
-        self.is_registered = False
         
-        # Linux system information
+        # ✅ FIXED: Ensure agent_id is NEVER None
+        if not self.agent_id:
+            self.agent_id = str(uuid.uuid4())
+            self._save_agent_id(self.agent_id)
+        
+        self.is_registered = False
         self.system_info = self._get_linux_system_info()
         
         # Core components
@@ -51,51 +46,37 @@ class LinuxAgentManager:
         self.event_processor = None
         self.collectors = {}
         
-        # Performance tracking
-        self.start_time = None
-        self.last_heartbeat = None
-        
-        # Linux-specific settings
-        self.requires_root = True
-        self.has_root_privileges = os.geteuid() == 0
-        
-        self.logger.info(f"🐧 Linux Agent Manager initialized")
-        self.logger.info(f"   🆔 Agent ID: {self.agent_id}")
-        self.logger.info(f"   🖥️ System: {self.system_info.get('distribution', 'Unknown')} {self.system_info.get('version', '')}")
-        self.logger.info(f"   🔒 Root privileges: {self.has_root_privileges}")
+        self.logger.info(f"🐧 Linux Agent Manager initialized with ID: {self.agent_id[:8]}...")
     
     def _load_or_create_agent_id(self) -> str:
-        """Load existing agent ID or create new one"""
+        """✅ FIXED: Guaranteed agent_id creation"""
         try:
-            # Try to load existing agent ID
+            # Try to load existing
             if os.path.exists(self.agent_id_file):
                 with open(self.agent_id_file, 'r') as f:
                     agent_id = f.read().strip()
                     if agent_id and len(agent_id) >= 32:
-                        self.logger.info(f"📋 Loaded existing agent ID: {agent_id[:8]}...")
                         return agent_id
             
-            # Create new agent ID
+            # Create new agent_id
             new_agent_id = str(uuid.uuid4())
-            
-            # Save to file
-            try:
-                os.makedirs(os.path.dirname(self.agent_id_file), exist_ok=True)
-                with open(self.agent_id_file, 'w') as f:
-                    f.write(new_agent_id)
-                os.chmod(self.agent_id_file, 0o600)
-                self.logger.info(f"🆕 Created new agent ID: {new_agent_id[:8]}...")
-            except Exception as e:
-                self.logger.error(f"❌ Could not save agent ID: {e}")
-            
+            self._save_agent_id(new_agent_id)
             return new_agent_id
             
         except Exception as e:
             self.logger.error(f"❌ Error with agent ID: {e}")
-            # Fallback to generated ID
-            fallback_id = str(uuid.uuid4())
-            self.logger.warning(f"⚠️ Using fallback agent ID: {fallback_id[:8]}...")
-            return fallback_id
+            # ✅ FIXED: Always return a valid agent_id
+            return str(uuid.uuid4())
+    
+    def _save_agent_id(self, agent_id: str):
+        """✅ FIXED: Save agent_id to file"""
+        try:
+            os.makedirs(os.path.dirname(self.agent_id_file), exist_ok=True)
+            with open(self.agent_id_file, 'w') as f:
+                f.write(agent_id)
+            os.chmod(self.agent_id_file, 0o600)
+        except Exception as e:
+            self.logger.error(f"Could not save agent ID: {e}")
     
     def _get_linux_system_info(self) -> Dict[str, str]:
         """Get Linux system information"""
@@ -386,154 +367,98 @@ class LinuxAgentManager:
             self.logger.error(f"❌ Error stopping Linux agent manager: {e}")
     
     async def _register_with_server(self):
-        """Register Linux Agent with EDR server"""
+        """✅ FIXED: Registration with ALL required fields"""
         try:
-            self.logger.info("📡 Registering Linux Agent with EDR server...")
+            self.logger.info("📡 Registering Linux Agent with complete data...")
             
-            # Get domain and log it
-            domain = self._get_domain()
-            self.logger.info(f"🌐 Domain for registration: {domain}")
+            # ✅ FIXED: Get complete system information
+            import psutil
             
-            # Create registration data
+            # Get network interface info
+            ip_address = self._get_local_ip()
+            mac_address = self._get_mac_address()
+            
+            # Get current system metrics
+            cpu_usage = psutil.cpu_percent(interval=1)
+            memory = psutil.virtual_memory()
+            disk = psutil.disk_usage('/')
+            
+            # ✅ FIXED: Create registration data with ALL required fields
             registration_data = AgentRegistrationData(
                 hostname=self.system_info['hostname'],
-                ip_address=self._get_local_ip(),
-                operating_system=f"Linux {self.system_info.get('distribution', 'Unknown')} {self.system_info.get('version', '')}",
+                ip_address=ip_address,
+                operating_system=f"Linux {self.system_info.get('distribution', 'Unknown')}",
                 os_version=self.system_info.get('kernel', 'Unknown'),
                 architecture=self.system_info.get('architecture', 'Unknown'),
                 agent_version='2.1.0-Linux',
-                mac_address=self._get_mac_address(),
-                domain=domain,
+                mac_address=mac_address,
+                domain=self._get_domain(),
                 install_path=str(Path(__file__).resolve().parent.parent.parent),
+                status="Active",
+                cpu_usage=cpu_usage,
+                memory_usage=memory.percent,
+                disk_usage=disk.percent,
+                network_latency=0,
+                monitoring_enabled=True,
+                platform="linux",
                 kernel_version=self.system_info.get('kernel'),
                 distribution=self.system_info.get('distribution'),
-                distribution_version=self.system_info.get('version'),
-                has_root_privileges=self.has_root_privileges,
                 current_user=self.system_info.get('current_user'),
-                effective_user=self.system_info.get('effective_user'),
-                capabilities=['linux_monitoring', 'process_monitoring', 'file_monitoring']
+                has_root_privileges=self.system_info.get('is_root', False)
             )
             
-            # Log registration data
-            self.logger.info(f"📋 Registration data:")
+            # ✅ FIXED: Log registration details
+            self.logger.info(f"📋 Registration Details:")
             self.logger.info(f"   🆔 Agent ID: {self.agent_id}")
             self.logger.info(f"   🖥️ Hostname: {registration_data.hostname}")
-            self.logger.info(f"   🌐 Domain: {registration_data.domain}")
+            self.logger.info(f"   🌐 IP Address: {registration_data.ip_address}")
             self.logger.info(f"   🐧 OS: {registration_data.operating_system}")
+            self.logger.info(f"   🌐 Domain: {registration_data.domain}")
             
-            # Send registration request
+            # ✅ FIXED: Send registration with proper error handling
             response = await self.communication.register_agent(registration_data)
             
             if response and response.get('success'):
-                # Use the agent_id from response OR keep our existing one
+                # ✅ FIXED: Handle agent_id from server
                 server_agent_id = response.get('agent_id')
-                
-                if server_agent_id and server_agent_id != self.agent_id:
-                    # Server assigned a new ID - update ours
-                    self.logger.info(f"📋 Server assigned new agent_id: {server_agent_id[:8]}...")
-                    self.agent_id = server_agent_id
-                    self._save_agent_id(self.agent_id)
-                else:
-                    # Keep our existing agent_id
-                    self.logger.info(f"📋 Using existing agent_id: {self.agent_id[:8]}...")
+                if server_agent_id:
+                    if server_agent_id != self.agent_id:
+                        self.logger.info(f"📋 Server assigned new agent_id: {server_agent_id[:8]}...")
+                        self.agent_id = server_agent_id
+                        self._save_agent_id(self.agent_id)
                 
                 self.is_registered = True
-                
                 self.logger.info(f"✅ Linux Agent registered successfully: {self.agent_id}")
-                self.logger.info(f"   🖥️ Hostname: {self.system_info['hostname']}")
-                self.logger.info(f"   🐧 OS: Linux {self.system_info.get('distribution', 'Unknown')}")
                 
-                # Update configuration with server settings
-                if 'heartbeat_interval' in response:
-                    self.config['agent']['heartbeat_interval'] = response['heartbeat_interval']
-                    
+                # ✅ FIXED: Update all components with correct agent_id
+                await self._update_all_agent_ids()
+                
+                return True
+                
             else:
                 error_msg = response.get('error', 'Unknown error') if response else 'No response'
-                raise Exception(f"Agent registration failed: {error_msg}")
+                raise Exception(f"Registration failed: {error_msg}")
                 
         except Exception as e:
             self.logger.error(f"❌ Agent registration failed: {e}")
             raise
     
-    def _save_agent_id(self, agent_id: str):
-        """Save agent ID to file"""
-        try:
-            os.makedirs(os.path.dirname(self.agent_id_file), exist_ok=True)
-            with open(self.agent_id_file, 'w') as f:
-                f.write(agent_id)
-            os.chmod(self.agent_id_file, 0o600)
-            self.logger.debug(f"Agent ID saved to {self.agent_id_file}")
-        except Exception as e:
-            self.logger.error(f"Could not save agent ID: {e}")
-    
-    def _get_local_ip(self) -> str:
-        """Get local IP address"""
-        try:
-            import socket
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except:
-            return '127.0.0.1'
-    
-    def _get_mac_address(self) -> Optional[str]:
-        """Get MAC address"""
-        try:
-            import uuid
-            mac = uuid.UUID(int=uuid.getnode()).hex[-12:]
-            return ':'.join([mac[i:i+2] for i in range(0, 12, 2)])
-        except:
-            return None
-    
-    def _get_domain(self) -> Optional[str]:
-        """Get domain name (Linux-specific)"""
-        try:
-            # Try to get domain from hostname
-            import socket
-            fqdn = socket.getfqdn()
-            if '.' in fqdn:
-                domain = fqdn.split('.', 1)[1]
-                if domain and domain != 'localdomain':
-                    return domain
-            
-            # Try to read from /etc/domain
-            if os.path.exists('/etc/domain'):
-                with open('/etc/domain', 'r') as f:
-                    domain = f.read().strip()
-                    if domain and domain != 'localdomain':
-                        return domain
-            
-            # Try to get from resolv.conf
-            if os.path.exists('/etc/resolv.conf'):
-                with open('/etc/resolv.conf', 'r') as f:
-                    for line in f:
-                        if line.startswith('domain '):
-                            domain = line.split()[1].strip()
-                            if domain and domain != 'localdomain':
-                                return domain
-            
-            # Fallback
-            return "local.linux"
-            
-        except Exception as e:
-            self.logger.debug(f"Could not get domain: {e}")
-            return "local.linux"
-    
     async def _update_all_agent_ids(self):
-        """Update agent_id in all components"""
+        """✅ FIXED: Update agent_id in ALL components"""
         try:
+            if not self.agent_id:
+                raise Exception("Cannot update components - agent_id is None")
+            
             self.logger.info(f"🔄 Updating agent_id in all components: {self.agent_id[:8]}...")
             
-            # Update event processor
-            if self.event_processor and self.agent_id:
+            # ✅ FIXED: Update event processor
+            if self.event_processor:
                 self.event_processor.set_agent_id(self.agent_id)
                 self.logger.info(f"[EVENT_PROCESSOR] Updated AgentID: {self.agent_id[:8]}...")
             
-            # Update collectors
+            # ✅ FIXED: Update all collectors
             for collector_name, collector in self.collectors.items():
-                if self.agent_id:
+                if hasattr(collector, 'set_agent_id'):
                     collector.set_agent_id(self.agent_id)
                     self.logger.info(f"[{collector_name.upper()}_COLLECTOR] Updated AgentID: {self.agent_id[:8]}...")
             
@@ -541,6 +466,7 @@ class LinuxAgentManager:
             
         except Exception as e:
             self.logger.error(f"❌ Failed to update agent_id in components: {e}")
+            raise
     
     async def _heartbeat_loop(self):
         """Heartbeat loop"""

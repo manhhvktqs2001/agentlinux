@@ -269,54 +269,41 @@ class LinuxBaseCollector(ABC):
                 await asyncio.sleep(2)
     
     async def _send_event_immediately(self, event_data):
-        """Send event immediately to event processor - FIXED"""
+        """✅ FIXED: Send event with proper agent_id validation"""
         try:
-            if self.agent_id and not hasattr(event_data, 'agent_id'):
-                event_data.agent_id = self.agent_id
-            elif self.agent_id and not event_data.agent_id:
-                event_data.agent_id = self.agent_id
-            if not event_data.agent_id:
-                self.logger.error(f"❌ CRITICAL: Event missing agent_id - Type: {event_data.event_type}, Action: {event_data.event_action}")
-                self.collection_errors += 1
+            # ✅ FIXED: Critical validation
+            if not self.agent_id:
+                self.logger.error(f"❌ CRITICAL: {self.collector_name} missing agent_id")
                 return
-            # Safely update raw_event_data - FIXED: Always keep as dict
-            if hasattr(event_data, 'raw_event_data'):
-                if isinstance(event_data.raw_event_data, str):
-                    import json
-                    try:
-                        raw_data = json.loads(event_data.raw_event_data)
-                    except:
-                        raw_data = {'original_data': event_data.raw_event_data}
-                elif isinstance(event_data.raw_event_data, dict):
-                    raw_data = event_data.raw_event_data.copy()
-                else:
-                    raw_data = {}
-                raw_data.update({
-                    'platform': 'linux',
-                    'collector': self.collector_name,
-                    'collection_time': time.time(),
-                    'has_root_privileges': self.has_required_privileges,
-                    'agent_id_set_by': 'collector',
-                    'processor_version': 'enhanced_v2.1',
-                    'database_compatible': True
-                })
-                # FIXED: Always keep as dict, never convert to string
-                event_data.raw_event_data = raw_data
+            
+            if not event_data:
+                self.logger.error(f"❌ CRITICAL: {self.collector_name} event_data is None")
+                return
+            
+            # ✅ FIXED: Ensure event has agent_id
+            if not hasattr(event_data, 'agent_id') or not event_data.agent_id:
+                event_data.agent_id = self.agent_id
+            
+            # ✅ FIXED: Validate agent_id matches
+            if event_data.agent_id != self.agent_id:
+                self.logger.warning(f"⚠️ Agent ID mismatch in {self.collector_name}")
+                event_data.agent_id = self.agent_id
+            
+            # ✅ FIXED: Validate event processor
+            if not self.event_processor:
+                self.logger.error(f"❌ {self.collector_name} event processor not available")
+                return
+            
+            # ✅ FIXED: Send event
+            await self.event_processor.add_event(event_data)
+            
+            # ✅ FIXED: Log success
             event_type = getattr(event_data, 'event_type', 'Unknown')
             event_action = getattr(event_data, 'event_action', 'Unknown')
-            process_name = getattr(event_data, 'process_name', 'Unknown')
-            self.logger.info(f"🐧 Linux {event_type} Event: {event_action} - {process_name} (Agent: {event_data.agent_id[:8]}...)")
-            if not self.event_processor:
-                self.logger.debug("⚠️ Event processor not available")
-                self.collection_errors += 1
-                return
-            await self.event_processor.add_event(event_data)
-            self.events_sent += 1
-            self.events_collected += 1
-            self.logger.debug(f"📤 Linux event sent: {event_type} - {event_action}")
+            self.logger.info(f"🐧 Linux {event_type} Event: {event_action} - Agent: {self.agent_id[:8]}...")
+            
         except Exception as e:
-            self.logger.error(f"❌ Event sending failed: {e}")
-            self.collection_errors += 1
+            self.logger.error(f"❌ {self.collector_name} event sending failed: {e}")
     
     @abstractmethod
     async def _collect_data(self):
@@ -372,9 +359,12 @@ class LinuxBaseCollector(ABC):
         self.logger.debug(f"Event processor set for {self.collector_name}")
     
     def set_agent_id(self, agent_id: str):
-        """Set the agent ID for this collector"""
+        """✅ FIXED: Set and validate agent ID"""
+        if not agent_id:
+            raise ValueError("Agent ID cannot be None or empty")
+        
         self.agent_id = agent_id
-        self.logger.debug(f"Agent ID set for {self.collector_name}: {agent_id}")
+        self.logger.info(f"Agent ID set for {self.collector_name}: {agent_id[:8]}...")
     
     def get_linux_user_info(self, uid: int) -> Dict[str, str]:
         """Get Linux user information by UID"""

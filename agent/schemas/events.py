@@ -97,239 +97,138 @@ class EventSeverity(Enum):
 
 @dataclass
 class EventData:
-    """
-    Linux Event Data Structure - FIXED FOR LINUX (NO REGISTRY)
-    Maps to Events table in EDR_System database
-    """
+    """✅ FIXED: Event Data with proper agent_id validation"""
     
-    # REQUIRED: Core event information matching database
-    event_type: str  # Maps to EventType (Process, File, Network, Authentication, System)
-    event_action: str  # Maps to EventAction  
-    event_timestamp: datetime = field(default_factory=datetime.now)  # Maps to EventTimestamp
-    severity: str = "Info"  # Maps to Severity
+    # ✅ FIXED: Core event information
+    event_type: str
+    event_action: str
+    event_timestamp: datetime = field(default_factory=datetime.now)
+    severity: str = "Info"
     
-    # REQUIRED: Agent information
-    agent_id: Optional[str] = None  # Maps to AgentID (REQUIRED)
+    # ✅ FIXED: Agent information - REQUIRED
+    agent_id: Optional[str] = None
     
-    # Process information (Maps to database process fields)
-    process_id: Optional[int] = None  # Maps to ProcessID
-    process_name: Optional[str] = None  # Maps to ProcessName
-    process_path: Optional[str] = None  # Maps to ProcessPath
-    command_line: Optional[str] = None  # Maps to CommandLine
-    parent_pid: Optional[int] = None  # Maps to ParentPID
-    parent_process_name: Optional[str] = None  # Maps to ParentProcessName
-    process_user: Optional[str] = None  # Maps to ProcessUser
-    process_hash: Optional[str] = None  # Maps to ProcessHash
+    # Process information
+    process_id: Optional[int] = None
+    process_name: Optional[str] = None
+    process_path: Optional[str] = None
+    command_line: Optional[str] = None
+    parent_pid: Optional[int] = None
+    process_user: Optional[str] = None
     
-    # File information (Maps to database file fields)
-    file_path: Optional[str] = None  # Maps to FilePath
-    file_name: Optional[str] = None  # Maps to FileName
-    file_size: Optional[int] = None  # Maps to FileSize
-    file_hash: Optional[str] = None  # Maps to FileHash
-    file_extension: Optional[str] = None  # Maps to FileExtension
-    file_operation: Optional[str] = None  # Maps to FileOperation
+    # File information
+    file_path: Optional[str] = None
+    file_name: Optional[str] = None
+    file_size: Optional[int] = None
+    file_extension: Optional[str] = None
     
-    # Network information (Maps to database network fields)
-    source_ip: Optional[str] = None  # Maps to SourceIP
-    destination_ip: Optional[str] = None  # Maps to DestinationIP
-    source_port: Optional[int] = None  # Maps to SourcePort
-    destination_port: Optional[int] = None  # Maps to DestinationPort
-    protocol: Optional[str] = None  # Maps to Protocol
-    direction: Optional[str] = None  # Maps to Direction
-    connection_status: Optional[str] = None  # Maps to ConnectionStatus
+    # Network information
+    source_ip: Optional[str] = None
+    destination_ip: Optional[str] = None
+    source_port: Optional[int] = None
+    destination_port: Optional[int] = None
+    protocol: Optional[str] = None
+    direction: Optional[str] = None
     
-    # Authentication information (Maps to database auth fields)
-    login_user: Optional[str] = None  # Maps to LoginUser
-    login_type: Optional[str] = None  # Maps to LoginType
-    login_result: Optional[str] = None  # Maps to LoginResult
+    # Authentication information
+    login_user: Optional[str] = None
+    login_type: Optional[str] = None
+    login_result: Optional[str] = None
     
-    # Detection status (Maps to database detection fields)
-    threat_level: str = "None"  # Maps to ThreatLevel
-    risk_score: int = 0  # Maps to RiskScore
-    analyzed: bool = False  # Maps to Analyzed
-    analyzed_at: Optional[datetime] = None  # Maps to AnalyzedAt
+    # Detection information
+    threat_level: str = "None"
+    risk_score: int = 0
+    analyzed: bool = False
     
-    # Raw event data (Maps to RawEventData)
-    raw_event_data: Optional[dict] = None  # Maps to RawEventData (dict)
-    
-    # Additional Linux-specific fields (stored in raw_event_data)
-    hostname: Optional[str] = None
-    cpu_usage: Optional[float] = None
-    memory_usage: Optional[float] = None
-    disk_usage: Optional[float] = None
-    network_usage: Optional[float] = None
+    # Additional information
     description: Optional[str] = None
+    raw_event_data: Optional[dict] = None
     
     def __post_init__(self):
-        """Post-initialization processing to ensure database compatibility"""
-        # FIX: Validate agent_id immediately
+        """✅ FIXED: Post-initialization with agent_id validation"""
+        # ✅ FIXED: Critical agent_id validation
         if not self.agent_id:
-            # Don't raise error here, just log for debugging
             logger = logging.getLogger(__name__)
-            logger.debug(f"EventData created without agent_id - Type: {self.event_type}, Action: {self.event_action}")
+            logger.error(f"❌ CRITICAL: EventData created without agent_id - Type: {self.event_type}")
         
-        # Ensure event_action is string value
-        if hasattr(self.event_action, 'value'):
-            self.event_action = self.event_action.value
-        
-        # Normalize severity to match database constraints
+        # ✅ FIXED: Normalize severity
         severity_map = {
-            'CRITICAL': 'Critical',
-            'HIGH': 'High', 
-            'MEDIUM': 'Medium',
-            'LOW': 'Low',
-            'INFO': 'Info',
-            'INFORMATION': 'Info'
+            'CRITICAL': 'Critical', 'HIGH': 'High', 'MEDIUM': 'Medium',
+            'LOW': 'Low', 'INFO': 'Info', 'INFORMATION': 'Info'
         }
         self.severity = severity_map.get(self.severity.upper(), self.severity)
         
-        # Ensure threat_level matches database constraints
-        threat_level_map = {
-            'NONE': 'None',
-            'SUSPICIOUS': 'Suspicious', 
-            'MALICIOUS': 'Malicious'
-        }
-        self.threat_level = threat_level_map.get(self.threat_level.upper(), 'None')
-        
-        # Ensure risk_score is within valid range
-        self.risk_score = max(0, min(100, self.risk_score))
-        
-        # Generate description if not provided
+        # ✅ FIXED: Generate description if missing
         if not self.description:
             self.description = self._generate_description()
         
-        # FIXED: Only prepare raw_event_data if it's not already set by collector
+        # ✅ FIXED: Prepare raw_event_data as dict
         if self.raw_event_data is None:
-            self._prepare_raw_event_data()
-        elif isinstance(self.raw_event_data, str):
-            # If it's a string, convert to dict
-            self._prepare_raw_event_data()
+            self.raw_event_data = {}
+        
+        self.raw_event_data.update({
+            'platform': 'linux',
+            'event_timestamp': self.event_timestamp.isoformat(),
+            'agent_id_validated': bool(self.agent_id),
+            'database_compatible': True
+        })
     
     def _generate_description(self) -> str:
-        """Generate event description"""
+        """✅ FIXED: Generate event description"""
         try:
             if self.event_type == "Process":
                 return f"Linux Process {self.event_action}: {self.process_name or 'Unknown'}"
             elif self.event_type == "File":
-                return f"Linux File {self.event_action}: {self.file_name or self.file_path or 'Unknown'}"
+                return f"Linux File {self.event_action}: {self.file_name or 'Unknown'}"
             elif self.event_type == "Network":
-                if self.destination_ip:
-                    return f"Linux Network {self.event_action}: {self.destination_ip}:{self.destination_port or 0}"
-                return f"Linux Network {self.event_action}"
+                return f"Linux Network {self.event_action}: {self.destination_ip or 'Unknown'}"
             elif self.event_type == "Authentication":
                 return f"Linux Auth {self.event_action}: {self.login_user or 'Unknown'}"
-            elif self.event_type == "System":
-                return f"Linux System {self.event_action}"
             else:
                 return f"Linux {self.event_type} Event: {self.event_action}"
-        except Exception:
+        except:
             return f"Linux Event: {self.event_type} - {self.event_action}"
     
-    def _prepare_raw_event_data(self):
-        """Prepare raw_event_data as dict for database storage - FIXED"""
-        try:
-            # If raw_event_data is already a dict, use it
-            if isinstance(self.raw_event_data, dict):
-                raw_data = self.raw_event_data.copy()
-            elif isinstance(self.raw_event_data, str):
-                import json
-                try:
-                    raw_data = json.loads(self.raw_event_data)
-                except:
-                    raw_data = {'original_data': self.raw_event_data}
-            else:
-                raw_data = {}
-            
-            raw_data.update({
-                'platform': 'linux',
-                'event_timestamp': self.event_timestamp.isoformat(),
-                'description': self.description,
-                'no_registry': True  # Indicate this is Linux (no Registry support)
-            })
-            
-            # Add optional fields that exist
-            optional_fields = [
-                'hostname', 'cpu_usage', 'memory_usage', 'disk_usage',
-                'network_usage', 'process_uid', 'process_gid',
-                'process_effective_uid', 'process_effective_gid',
-                'process_session_id', 'process_terminal',
-                'process_working_directory', 'process_environment',
-                'file_permissions', 'file_owner', 'file_group',
-                'file_inode', 'file_device', 'file_mount_point',
-                'file_type', 'network_interface', 'network_namespace',
-                'connection_state', 'bytes_sent', 'bytes_received',
-                'login_source_ip', 'login_terminal', 'login_session_id'
-            ]
-            
-            for field in optional_fields:
-                value = getattr(self, field, None)
-                if value is not None:
-                    raw_data[field] = value
-            
-            self.raw_event_data = raw_data  # Store as dict, not string
-        except Exception as e:
-            self.raw_event_data = {'platform': 'linux', 'error': str(e), 'no_registry': True}
-    
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for API submission"""
-        try:
-            # FIX: Validate agent_id before serialization
-            if not self.agent_id:
-                return {'error': 'Event missing required agent_id field'}
-            
-            data = {
-                # REQUIRED fields (snake_case)
-                'agent_id': self.agent_id,
-                'event_type': self.event_type,
-                'event_action': self.event_action,
-                'event_timestamp': self.event_timestamp.isoformat() if self.event_timestamp else None,
-                'severity': self.severity,
-                
-                # Process fields (optional)
-                'process_id': self.process_id,
-                'process_name': self.process_name,
-                'process_path': self.process_path,
-                'command_line': self.command_line,
-                'parent_pid': self.parent_pid,
-                'parent_process_name': self.parent_process_name,
-                'process_user': self.process_user,
-                'process_hash': self.process_hash,
-                
-                # File fields (optional)
-                'file_path': self.file_path,
-                'file_name': self.file_name,
-                'file_size': self.file_size,
-                'file_hash': self.file_hash,
-                'file_extension': self.file_extension,
-                'file_operation': self.file_operation,
-                
-                # Network fields (optional)
-                'source_ip': self.source_ip,
-                'destination_ip': self.destination_ip,
-                'source_port': self.source_port,
-                'destination_port': self.destination_port,
-                'protocol': self.protocol,
-                'direction': self.direction,
-                'connection_status': self.connection_status,
-                
-                # Authentication fields (Linux uses login_user, login_type, login_result)
-                'login_user': self.login_user,
-                'login_type': self.login_type,
-                'login_result': self.login_result,
-                
-                # Threat detection fields
-                'threat_level': self.threat_level,
-                'risk_score': self.risk_score,
-                'analyzed': self.analyzed,
-                
-                # Raw event data
-                'raw_event_data': self.raw_event_data
-            }
-            
-            # Remove None values
-            return {k: v for k, v in data.items() if v is not None}
-        except Exception as e:
-            return {'error': f'Event serialization failed: {str(e)}'}
+        """✅ FIXED: Convert to dictionary with agent_id validation"""
+        # ✅ FIXED: Critical validation
+        if not self.agent_id:
+            return {'error': 'Event missing required agent_id field'}
+        
+        data = {
+            'agent_id': self.agent_id,
+            'event_type': self.event_type,
+            'event_action': self.event_action,
+            'event_timestamp': self.event_timestamp.isoformat(),
+            'severity': self.severity,
+            'process_id': self.process_id,
+            'process_name': self.process_name,
+            'process_path': self.process_path,
+            'command_line': self.command_line,
+            'parent_pid': self.parent_pid,
+            'process_user': self.process_user,
+            'file_path': self.file_path,
+            'file_name': self.file_name,
+            'file_size': self.file_size,
+            'file_extension': self.file_extension,
+            'source_ip': self.source_ip,
+            'destination_ip': self.destination_ip,
+            'source_port': self.source_port,
+            'destination_port': self.destination_port,
+            'protocol': self.protocol,
+            'direction': self.direction,
+            'login_user': self.login_user,
+            'login_type': self.login_type,
+            'login_result': self.login_result,
+            'threat_level': self.threat_level,
+            'risk_score': self.risk_score,
+            'analyzed': self.analyzed,
+            'description': self.description,
+            'raw_event_data': self.raw_event_data
+        }
+        
+        # ✅ FIXED: Remove None values
+        return {k: v for k, v in data.items() if v is not None}
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'EventData':
