@@ -2,6 +2,7 @@
 """
 Linux Communication Manager - FIXED VERSION
 Handles communication with EDR server with proper imports - IMPORT ERROR FIXED
++ REALTIME LOG SENDING & PARALLEL THREAD LOGS
 """
 import aiohttp
 import asyncio
@@ -17,6 +18,33 @@ from agent.core.config_manager import ConfigManager
 from agent.schemas.agent_data import AgentRegistrationData, AgentHeartbeatData
 from agent.schemas.events import EventData
 
+def serialize_datetime(obj):
+    """✅ FIXED: JSON serializer that handles datetime objects"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif hasattr(obj, 'isoformat'):
+        return obj.isoformat()
+    else:
+        return str(obj)
+
+class JSONEncoder(json.JSONEncoder):
+    """✅ FIXED: Custom JSON encoder for datetime objects"""
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
+
+@dataclass
+class LogEntry:
+    """Log entry for realtime transmission"""
+    timestamp: str
+    level: str
+    message: str
+    thread_name: str
+    logger_name: str
+    agent_id: str
+    hostname: str
+
 @dataclass
 class ConnectionStats:
     """Connection statistics"""
@@ -25,9 +53,13 @@ class ConnectionStats:
     failed_requests: int = 0
     avg_response_time: float = 0.0
     last_request_time: Optional[datetime] = None
+    logs_sent: int = 0
+    logs_failed: int = 0
 
 class ServerCommunication:
-    """✅ FIXED: Server Communication with proper imports - NO MORE IMPORT ERRORS"""
+    """✅ FIXED: Server Communication with proper imports - NO MORE IMPORT ERRORS
+    + REALTIME LOG SENDING & PARALLEL THREAD LOGS
+    """
     
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
@@ -60,6 +92,16 @@ class ServerCommunication:
         # Offline event storage
         self.offline_events = []
         
+        # 🚀 NEW: Realtime log sending features
+        self.agent_id = None
+        self.hostname = None
+        self.log_queue = deque(maxlen=1000)  # Buffer for logs
+        self.log_sending_task = None
+        self.log_sending_interval = 5  # Send logs every 5 seconds
+        self.enable_realtime_logs = self.config.get('agent', {}).get('enable_realtime_logs', True)
+        self.log_batch_size = self.config.get('agent', {}).get('log_batch_size', 10)
+        self.thread_logs = {}  # Store logs by thread name
+        
         self.logger.info(f"📡 Server Communication initialized")
         self.logger.info(f"   🎯 Server URL: {self.base_url}")
         self.logger.info(f"   🔑 Auth Token: {self.auth_token}")
@@ -68,7 +110,13 @@ class ServerCommunication:
         self.logger.info(f"   📤 Individual threshold: {self.individual_threshold} events")
         if self.disable_batch_submission:
             self.logger.info(f"   🚫 Batch submission disabled - using individual only")
-
+        
+        # 🚀 NEW: Log realtime status
+        if self.enable_realtime_logs:
+            self.logger.info(f"   📝 Realtime logs enabled - batch size: {self.log_batch_size}")
+        else:
+            self.logger.info(f"   📝 Realtime logs disabled")
+    
     async def initialize(self):
         """✅ FIXED: Initialize with proper error handling"""
         try:
@@ -91,7 +139,7 @@ class ServerCommunication:
         except Exception as e:
             self.logger.error(f"❌ Communication initialization failed: {e}")
             self.offline_mode = True
-
+    
     async def _test_connection(self):
         """✅ FIXED: Test connection with proper error handling"""
         try:
@@ -108,7 +156,7 @@ class ServerCommunication:
         except Exception as e:
             self.logger.warning(f"⚠️ Server connection test failed: {e}")
             self.is_connected = False
-
+    
     def _validate_event_for_database(self, event: EventData) -> tuple[bool, str]:
         """✅ FIXED: Built-in event validation to replace missing import"""
         try:
@@ -198,7 +246,7 @@ class ServerCommunication:
                 agent_id = response.get('agent_id')
                 if agent_id:
                     self.agent_id = agent_id
-                    self.logger.info(f"✅ Agent registered successfully: {agent_id}")
+                self.logger.info(f"✅ Agent registered successfully: {agent_id}")
                 return response
             elif response and response.get('error') and 'already registered' in response.get('error', '').lower():
                 # ✅ FIXED: Handle already registered case
@@ -216,7 +264,7 @@ class ServerCommunication:
         except Exception as e:
             self.logger.error(f"❌ Agent registration error: {e}")
             return None
-
+    
     async def send_heartbeat(self, heartbeat_data: AgentHeartbeatData) -> Optional[Dict]:
         """Send heartbeat to server"""
         try:
@@ -239,7 +287,7 @@ class ServerCommunication:
                 'message': 'Heartbeat error',
                 'error': str(e)
             }
-
+    
     async def submit_event(self, event_data: EventData) -> Tuple[bool, Optional[Dict], Optional[str]]:
         """Submit single event to server with enhanced validation"""
         try:
@@ -296,7 +344,7 @@ class ServerCommunication:
         except Exception as e:
             self.logger.error(f"❌ Error submitting event: {e}")
             return False, None, str(e)
-
+    
     async def submit_event_batch(self, events: List[EventData]) -> Tuple[bool, Optional[Dict], Optional[str]]:
         """Submit batch of events to server with automatic fallback to individual submission"""
         try:
@@ -418,7 +466,7 @@ class ServerCommunication:
         except Exception as e:
             self.logger.error(f"❌ Individual submission error: {e}")
             return False, None, str(e)
-
+    
     async def _make_request(self, method: str, url: str, payload: Optional[Dict] = None) -> Optional[Dict]:
         """✅ FIXED: Make HTTP request with comprehensive error handling and detailed logging"""
         if not self.session:
@@ -441,10 +489,32 @@ class ServerCommunication:
                         self.logger.debug(f"📡 GET response status: {response.status}")
                         return await self._handle_response(response)
                 elif method.upper() == 'POST':
-                    async with self.session.post(url, json=payload, headers=headers, timeout=self.timeout) as response:
+                    # ✅ FIXED: Properly serialize payload with datetime handling
+                    if payload:
+                        try:
+                            # Use custom JSON encoder for datetime objects
+                            json_payload = json.dumps(payload, cls=JSONEncoder, default=serialize_datetime)
+                            self.logger.debug(f"📤 Serialized payload: {json_payload[:200]}...")
+                        except Exception as json_error:
+                            self.logger.error(f"❌ JSON serialization error: {json_error}")
+                            # Fallback: convert datetime objects to strings
+                            def convert_datetime(obj):
+                                if isinstance(obj, dict):
+                                    return {k: convert_datetime(v) for k, v in obj.items()}
+                                elif isinstance(obj, list):
+                                    return [convert_datetime(item) for item in obj]
+                                elif isinstance(obj, datetime):
+                                    return obj.isoformat()
+                                else:
+                                    return obj
+                            
+                            payload = convert_datetime(payload)
+                            json_payload = json.dumps(payload)
+                    
+                    async with self.session.post(url, data=json_payload, headers=headers, timeout=self.timeout) as response:
                         self.logger.debug(f"📡 POST response status: {response.status}")
                         return await self._handle_response(response)
-                        
+                    
             except Exception as e:
                 self.logger.error(f"❌ Request attempt {attempt + 1} failed: {e}")
                 if attempt < max_retries - 1:
@@ -453,7 +523,7 @@ class ServerCommunication:
         
         self.logger.error(f"❌ All {max_retries} request attempts failed")
         return None
-
+    
     async def _handle_response(self, response) -> Optional[Dict]:
         """✅ FIXED: Handle HTTP response properly with detailed logging"""
         try:
@@ -498,7 +568,7 @@ class ServerCommunication:
         except Exception as e:
             self.logger.error(f"❌ Response handling error: {e}")
             return None
-
+    
     async def close(self):
         """Close communication session"""
         try:
@@ -507,7 +577,7 @@ class ServerCommunication:
                 self.logger.info("✅ Server communication closed")
         except Exception as e:
             self.logger.error(f"❌ Error closing communication: {e}")
-
+    
     def get_stats(self) -> Dict[str, Any]:
         """Get communication statistics"""
         return {
@@ -525,7 +595,7 @@ class ServerCommunication:
             'individual_threshold': self.individual_threshold,
             'submission_strategy': 'individual' if self.individual_threshold > 0 else 'batch'
         }
-
+    
     def is_online(self) -> bool:
         """Check if communication is online"""
         return not self.offline_mode and self.is_connected

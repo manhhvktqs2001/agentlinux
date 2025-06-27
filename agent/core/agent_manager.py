@@ -15,6 +15,9 @@ import pwd
 from datetime import datetime
 from typing import Optional, Dict, List, Any
 from pathlib import Path
+import socket
+import getpass
+import subprocess
 
 from agent.core.communication import ServerCommunication
 from agent.core.config_manager import ConfigManager
@@ -77,6 +80,18 @@ class LinuxAgentManager:
             'last_health_check': time.time()
         }
         
+        # ✅ OPTIMIZATION: System stats
+        self.system_stats = {
+            'cpu_usage': 0.0,
+            'memory_usage': 0.0,
+            'memory_available_mb': 0,
+            'disk_usage': 0.0,
+            'disk_free_gb': 0,
+            'last_system_check': time.time(),
+            'boot_time': psutil.boot_time(),
+            'uptime_seconds': time.time() - psutil.boot_time()
+        }
+        
         self.logger.info(f"🐧 Linux Agent Manager initialized with ID: {self.agent_id[:8]}...")
         self.logger.info(f"🔐 Root privileges: {self.has_root_privileges}")
         self.logger.info(f"⚙️ Requires root: {self.requires_root}")
@@ -119,70 +134,141 @@ class LinuxAgentManager:
     def _get_linux_system_info(self) -> Dict[str, str]:
         """Get comprehensive Linux system information"""
         try:
-            info = {
-                'hostname': platform.node(),
-                'kernel': platform.release(),
-                'architecture': platform.machine(),
-                'distribution': 'Unknown',
-                'version': 'Unknown',
-                'platform': 'linux',
-                'is_root': self.has_root_privileges
-            }
+            system_info = {}
             
-            # Get distribution info from /etc/os-release
+            # Basic system info
+            system_info['hostname'] = socket.gethostname()
+            system_info['architecture'] = platform.machine()
+            system_info['kernel'] = platform.release()
+            system_info['current_user'] = getpass.getuser()
+            system_info['is_root'] = os.geteuid() == 0
+            
+            # Distribution info
             try:
                 with open('/etc/os-release', 'r') as f:
-                    for line in f:
-                        if line.startswith('NAME='):
-                            info['distribution'] = line.split('=')[1].strip().strip('"')
-                        elif line.startswith('VERSION='):
-                            info['version'] = line.split('=')[1].strip().strip('"')
-                        elif line.startswith('VERSION_ID='):
-                            info['version_id'] = line.split('=')[1].strip().strip('"')
-                        elif line.startswith('ID='):
-                            info['distribution_id'] = line.split('=')[1].strip().strip('"')
-            except Exception as e:
-                self.logger.debug(f"Could not read /etc/os-release: {e}")
+                    os_release = f.read()
+                    for line in os_release.split('\n'):
+                        if line.startswith('PRETTY_NAME='):
+                            system_info['distribution'] = line.split('=', 1)[1].strip('"')
+                            break
+            except:
+                system_info['distribution'] = 'Unknown'
             
-            # Get additional system info
+            # CPU info
             try:
-                info['uptime'] = time.time() - psutil.boot_time()
-                info['cpu_count'] = psutil.cpu_count()
-                info['cpu_count_logical'] = psutil.cpu_count(logical=True)
-                
-                memory = psutil.virtual_memory()
-                info['total_memory'] = memory.total
-                info['available_memory'] = memory.available
-                info['memory_percent'] = memory.percent
-                
-                info['current_user'] = pwd.getpwuid(os.getuid()).pw_name
-                info['effective_user'] = pwd.getpwuid(os.geteuid()).pw_name
-                
-                try:
-                    load_avg = os.getloadavg()
-                    info['load_average_1min'] = load_avg[0]
-                    info['load_average_5min'] = load_avg[1]
-                    info['load_average_15min'] = load_avg[2]
-                except:
-                    pass
-                
-                try:
-                    disk = psutil.disk_usage('/')
-                    info['disk_total'] = disk.total
-                    info['disk_used'] = disk.used
-                    info['disk_free'] = disk.free
-                    info['disk_percent'] = disk.percent
-                except:
-                    pass
-                
-            except Exception as e:
-                self.logger.debug(f"Error getting additional system info: {e}")
+                with open('/proc/cpuinfo', 'r') as f:
+                    cpu_info = f.read()
+                    for line in cpu_info.split('\n'):
+                        if line.startswith('model name'):
+                            system_info['cpu_model'] = line.split(':', 1)[1].strip()
+                            break
+            except:
+                system_info['cpu_model'] = 'Unknown'
             
-            return info
+            # Memory info
+            try:
+                with open('/proc/meminfo', 'r') as f:
+                    mem_info = f.read()
+                    for line in mem_info.split('\n'):
+                        if line.startswith('MemTotal:'):
+                            mem_total = int(line.split()[1]) // 1024  # Convert to MB
+                            system_info['memory_total_mb'] = str(mem_total)
+                            break
+            except:
+                system_info['memory_total_mb'] = 'Unknown'
+            
+            # Network interfaces
+            try:
+                system_info['network_interfaces'] = []
+                for interface in os.listdir('/sys/class/net'):
+                    if interface != 'lo':  # Skip loopback
+                        system_info['network_interfaces'].append(interface)
+            except:
+                system_info['network_interfaces'] = []
+            
+            self.logger.info(f"✅ System info collected: {system_info['hostname']} ({system_info['distribution']})")
+            return system_info
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error getting system info: {e}")
+            return {
+                'hostname': 'unknown',
+                'architecture': 'unknown',
+                'kernel': 'unknown',
+                'distribution': 'unknown',
+                'current_user': 'unknown',
+                'is_root': False
+            }
+    
+    def _get_local_ip(self) -> str:
+        """Get local IP address"""
+        try:
+            # Try to get IP from socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                # Doesn't actually connect, just gets local IP
+                s.connect(('8.8.8.8', 80))
+                ip = s.getsockname()[0]
+            except Exception:
+                ip = '127.0.0.1'
+            finally:
+                s.close()
+            
+            self.logger.debug(f"📡 Local IP detected: {ip}")
+            return ip
             
         except Exception as e:
-            self.logger.error(f"❌ Error getting Linux system info: {e}")
-            return {'error': str(e), 'platform': 'linux', 'is_root': self.has_root_privileges}
+            self.logger.error(f"❌ Error getting local IP: {e}")
+            return '127.0.0.1'
+    
+    def _get_mac_address(self) -> str:
+        """Get MAC address of primary network interface"""
+        try:
+            # Get primary network interface
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.connect(('8.8.8.8', 80))
+                interface = s.getsockname()[0]
+            except Exception:
+                interface = 'lo'
+            finally:
+                s.close()
+            
+            # Get MAC address
+            try:
+                with open(f'/sys/class/net/{interface}/address', 'r') as f:
+                    mac = f.read().strip()
+                    self.logger.debug(f"📡 MAC address: {mac}")
+                    return mac
+            except:
+                # Fallback: try to get from ifconfig
+                try:
+                    result = subprocess.run(['ifconfig'], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        for line in result.stdout.split('\n'):
+                            if 'ether' in line:
+                                mac = line.split('ether')[1].strip().split()[0]
+                                return mac
+                except:
+                    pass
+                
+                return '00:00:00:00:00:00'
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error getting MAC address: {e}")
+            return '00:00:00:00:00:00'
+    
+    def _get_domain(self) -> str:
+        """Get domain name"""
+        try:
+            domain = socket.getfqdn()
+            if domain and domain != socket.gethostname():
+                return domain
+            else:
+                return 'local'
+        except Exception as e:
+            self.logger.error(f"❌ Error getting domain: {e}")
+            return 'local'
     
     async def initialize(self):
         """Initialize Linux Agent Manager with enhanced error handling"""
@@ -246,13 +332,13 @@ class LinuxAgentManager:
                 self.config_manager, 
                 self.communication
             )
-            
+    
             if self.agent_id:
                 self.event_processor.set_agent_id(self.agent_id)
                 self.logger.info(f"✅ Event Processor initialized with agent_id: {self.agent_id[:8]}...")
             else:
                 raise Exception("No agent_id available for event processor")
-                
+        
         except Exception as e:
             self.logger.error(f"❌ Event processor initialization failed: {e}")
             raise Exception(f"Event processor failed: {e}")
@@ -523,6 +609,93 @@ class LinuxAgentManager:
             self.logger.error(f"❌ Agent registration failed: {e}")
             raise
     
+    async def _update_all_agent_ids(self):
+        """Update agent_id in all components after successful registration"""
+        try:
+            self.logger.info(f"🔄 Updating agent_id in all components: {self.agent_id[:8]}...")
+            
+            # Update event processor
+            if self.event_processor:
+                if hasattr(self.event_processor, 'agent_id'):
+                    self.event_processor.agent_id = self.agent_id
+                    self.logger.debug("✅ Event processor agent_id updated")
+            
+            # Update all collectors
+            for name, collector in self.collectors.items():
+                if hasattr(collector, 'agent_id'):
+                    collector.agent_id = self.agent_id
+                    self.logger.debug(f"✅ {name} collector agent_id updated")
+            
+            # Update communication
+            if self.communication:
+                if hasattr(self.communication, 'agent_id'):
+                    self.communication.agent_id = self.agent_id
+                    self.logger.debug("✅ Communication agent_id updated")
+            
+            self.logger.info("✅ All components updated with new agent_id")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error updating agent_ids: {e}")
+    
+    async def _heartbeat_loop(self):
+        """Send periodic heartbeats to server"""
+        try:
+            while self.is_running and not self.is_paused:
+                try:
+                    await self.send_heartbeat()
+                    
+                    # Get heartbeat interval from config
+                    heartbeat_interval = self.config.get('agent', {}).get('heartbeat_interval', 60)
+                    await asyncio.sleep(heartbeat_interval)
+                    
+                except Exception as e:
+                    self.logger.error(f"❌ Heartbeat error: {e}")
+                    await asyncio.sleep(30)  # Wait 30 seconds before retry
+                    
+        except Exception as e:
+            self.logger.error(f"❌ Heartbeat loop failed: {e}")
+    
+    async def _system_monitor(self):
+        """Monitor system resources and health"""
+        try:
+            while self.is_running and not self.is_paused:
+                try:
+                    # Get system metrics
+                    cpu_percent = psutil.cpu_percent(interval=1)
+                    memory = psutil.virtual_memory()
+                    disk = psutil.disk_usage('/')
+                    
+                    # Update system stats
+                    self.system_stats.update({
+                        'cpu_usage': cpu_percent,
+                        'memory_usage': memory.percent,
+                        'memory_available_mb': memory.available // (1024 * 1024),
+                        'disk_usage': disk.percent,
+                        'disk_free_gb': disk.free // (1024 * 1024 * 1024),
+                        'last_system_check': time.time()
+                    })
+                    
+                    # Check thresholds and log warnings
+                    cpu_threshold = self.config.get('agent', {}).get('cpu_threshold', 90)
+                    memory_threshold = self.config.get('agent', {}).get('memory_threshold', 80)
+                    
+                    if cpu_percent > cpu_threshold:
+                        self.logger.warning(f"⚠️ High CPU usage: {cpu_percent:.1f}% (threshold: {cpu_threshold}%)")
+                    
+                    if memory.percent > memory_threshold:
+                        self.logger.warning(f"⚠️ High memory usage: {memory.percent:.1f}% (threshold: {memory_threshold}%)")
+                    
+                    # Get system monitor interval from config
+                    monitor_interval = self.config.get('agent', {}).get('system_monitor_interval', 60)
+                    await asyncio.sleep(monitor_interval)
+                    
+                except Exception as e:
+                    self.logger.error(f"❌ System monitoring error: {e}")
+                    await asyncio.sleep(60)
+                    
+        except Exception as e:
+            self.logger.error(f"❌ System monitor failed: {e}")
+    
     async def _performance_monitor(self):
         """✅ NEW: Monitor agent performance"""
         try:
@@ -606,8 +779,6 @@ class LinuxAgentManager:
         except Exception as e:
             self.logger.error(f"❌ Health monitor failed: {e}")
     
-    # ... (rest of the methods remain the same as in the original file)
-    
     def get_status(self) -> Dict[str, Any]:
         """Get enhanced agent status with performance and health metrics"""
         status = {
@@ -631,3 +802,148 @@ class LinuxAgentManager:
             'version': '2.1.0-Optimized'
         }
         return status
+    
+    async def stop(self):
+        """Stop the agent manager and all components"""
+        try:
+            self.logger.info("🛑 Stopping Linux Agent Manager...")
+            self.is_running = False
+            self.is_monitoring = False
+            
+            # Stop all collectors
+            if self.collectors:
+                self.logger.info("🛑 Stopping collectors...")
+                for name, collector in self.collectors.items():
+                    try:
+                        if hasattr(collector, 'stop'):
+                            await collector.stop()
+                            self.logger.info(f"✅ {name} collector stopped")
+                    except Exception as e:
+                        self.logger.error(f"❌ Error stopping {name} collector: {e}")
+            
+            # Stop event processor
+            if self.event_processor:
+                try:
+                    await self.event_processor.stop()
+                    self.logger.info("✅ Event processor stopped")
+                except Exception as e:
+                    self.logger.error(f"❌ Error stopping event processor: {e}")
+            
+            # Close communication
+            if self.communication:
+                try:
+                    await self.communication.close()
+                    self.logger.info("✅ Communication closed")
+                except Exception as e:
+                    self.logger.error(f"❌ Error closing communication: {e}")
+            
+            self.logger.info("✅ Linux Agent Manager stopped successfully")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error stopping agent manager: {e}")
+    
+    def _get_collector_status(self) -> Dict[str, Any]:
+        """Get status of all collectors"""
+        status = {}
+        for name, collector in self.collectors.items():
+            try:
+                if hasattr(collector, 'is_running'):
+                    status[name] = {
+                        'running': collector.is_running,
+                        'type': type(collector).__name__
+                    }
+                else:
+                    status[name] = {
+                        'running': True,  # Assume running if no status method
+                        'type': type(collector).__name__
+                    }
+            except Exception as e:
+                status[name] = {
+                    'running': False,
+                    'error': str(e),
+                    'type': type(collector).__name__
+                }
+        return status
+    
+    async def send_heartbeat(self):
+        """Send heartbeat to server"""
+        try:
+            if not self.is_registered or not self.agent_id:
+                self.logger.debug("Skipping heartbeat - agent not registered")
+                return
+            
+            # Get current system metrics
+            cpu_usage = psutil.cpu_percent(interval=0.1)
+            memory = psutil.virtual_memory()
+            disk = psutil.disk_usage('/')
+            
+            # Create heartbeat data - FIXED: Remove event_count parameter
+            heartbeat_data = AgentHeartbeatData(
+                agent_id=self.agent_id,
+                hostname=self.system_info['hostname'],  # Add hostname field
+                timestamp=datetime.now().isoformat(),  # Use string timestamp instead of datetime object
+                status="Active",
+                cpu_usage=cpu_usage,
+                memory_usage=memory.percent,
+                disk_usage=disk.percent,
+                uptime=time.time() - psutil.boot_time(),
+                events_sent=self.performance_stats.get('events_processed', 0),  # Use events_sent instead
+                collector_status=self._get_collector_status()
+            )
+            
+            # Send heartbeat
+            if self.communication:
+                await self.communication.send_heartbeat(heartbeat_data)
+                self.last_heartbeat = datetime.now()
+                self.logger.debug(f"💓 Heartbeat sent - CPU: {cpu_usage:.1f}%, Memory: {memory.percent:.1f}%")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error sending heartbeat: {e}")
+    
+    async def pause(self):
+        """Pause the agent manager"""
+        try:
+            self.logger.info("⏸️ Pausing Linux Agent Manager...")
+            self.is_paused = True
+            
+            # Pause collectors
+            for name, collector in self.collectors.items():
+                try:
+                    if hasattr(collector, 'pause'):
+                        await collector.pause()
+                        self.logger.info(f"⏸️ {name} collector paused")
+                except Exception as e:
+                    self.logger.error(f"❌ Error pausing {name} collector: {e}")
+            
+            self.logger.info("✅ Linux Agent Manager paused")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error pausing agent manager: {e}")
+    
+    async def resume(self):
+        """Resume the agent manager"""
+        try:
+            self.logger.info("▶️ Resuming Linux Agent Manager...")
+            self.is_paused = False
+            
+            # Resume collectors
+            for name, collector in self.collectors.items():
+                try:
+                    if hasattr(collector, 'resume'):
+                        await collector.resume()
+                        self.logger.info(f"▶️ {name} collector resumed")
+                except Exception as e:
+                    self.logger.error(f"❌ Error resuming {name} collector: {e}")
+            
+            self.logger.info("✅ Linux Agent Manager resumed")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error resuming agent manager: {e}")
+    
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """Get current performance statistics"""
+        return self.performance_stats.copy()
+    
+    def get_health_status(self) -> Dict[str, Any]:
+        """Get current health status"""
+        return self.health_checks.copy() 

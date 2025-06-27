@@ -155,7 +155,7 @@ class LinuxProcessCollector(LinuxBaseCollector):
                                     events.append(event)
                                     self.stats['process_creation_events'] += 1
                                     self._increment_event_count()
-                                    
+                        
                                     # ✅ OPTIMIZATION: Stop if we hit batch limit
                                     if len(events) >= self.max_events_per_batch:
                                         break
@@ -405,7 +405,7 @@ class LinuxProcessCollector(LinuxBaseCollector):
                     'create_time': proc_info.get('create_time'),
                     'monitoring_method': 'optimized_psutil_scan',
                     'cpu_percent': proc_info.get('cpu_percent', 0),
-                    'memory_mb': proc_info.get('memory_info', {}).get('rss', 0) / 1024 / 1024 if proc_info.get('memory_info') else 0
+                    'memory_mb': self._get_memory_mb(proc_info.get('memory_info'))
                 }
             )
             
@@ -477,6 +477,15 @@ class LinuxProcessCollector(LinuxBaseCollector):
             if any(proc.lower() in process_lower for proc in processes):
                 return category
         return 'other'
+    
+    def _get_memory_mb(self, memory_info):
+        """✅ FIXED: Properly handle psutil memory_info object"""
+        try:
+            if memory_info and hasattr(memory_info, 'rss'):
+                return memory_info.rss / 1024 / 1024  # Convert bytes to MB
+            return 0
+        except Exception:
+            return 0
     
     def get_stats(self) -> Dict:
         """Get detailed process collector statistics"""

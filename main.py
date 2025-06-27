@@ -403,7 +403,8 @@ class OptimizedLinuxEDRAgent:
         """Handle interrupt signals with graceful shutdown"""
         self.logger.info(f"🛑 Received signal {signum} - initiating graceful shutdown...")
         self.health_status['overall'] = 'signal_received'
-        asyncio.create_task(self.stop())
+        self.is_running = False  # Set flag to stop main loop
+        # Don't create task, just set the flag to exit
 
 async def main():
     """✅ OPTIMIZED: Main function with comprehensive error handling and monitoring"""
@@ -444,12 +445,16 @@ async def main():
                     last_health_check = time.time()
                     
             except KeyboardInterrupt:
-                logger.info("🛑 Keyboard interrupt received")
+                logger.info("🛑 Interrupted by user")
                 break
             except Exception as e:
                 logger.error(f"❌ Main loop error: {e}")
                 await asyncio.sleep(5)
-    
+        
+        # Ensure proper shutdown
+        if agent.is_running:
+            agent.is_running = False
+        
     except KeyboardInterrupt:
         logger.info("🛑 Interrupted by user")
     except Exception as e:
@@ -462,6 +467,10 @@ async def main():
                 await agent.stop()
             except Exception as e:
                 logger.error(f"❌ Error during shutdown: {e}")
+        
+        # Force exit to prevent hanging
+        logger.info("🔄 Exiting process...")
+        sys.exit(0)
 
 if __name__ == "__main__":
     try:
@@ -482,6 +491,7 @@ if __name__ == "__main__":
         
     except KeyboardInterrupt:
         print("\n🛑 Agent stopped by user")
+        sys.exit(0)
     except Exception as e:
         print(f"❌ Fatal error: {e}")
         sys.exit(1)
