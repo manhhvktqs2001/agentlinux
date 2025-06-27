@@ -15,6 +15,13 @@ import psutil
 from pathlib import Path
 from datetime import datetime
 
+# Add the agent directory to Python path
+agent_dir = Path(__file__).parent
+sys.path.insert(0, str(agent_dir))
+
+from agent.core.config_manager import ConfigManager
+from agent.core.agent_manager import LinuxAgentManager
+
 def setup_optimized_logging():
     """✅ OPTIMIZED: Setup enhanced logging with performance monitoring"""
     log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -356,11 +363,13 @@ class OptimizedLinuxEDRAgent:
                             health_checks = self.agent_manager.health_checks
                             self.health_status.update(health_checks)
                         
-                        # Check if monitoring is active
-                        if hasattr(self.agent_manager, 'is_monitoring'):
-                            if not self.agent_manager.is_monitoring:
+                        # Check if monitoring is active - only warn if we're sure it should be active
+                        if hasattr(self.agent_manager, 'is_monitoring') and hasattr(self.agent_manager, 'is_running'):
+                            if self.agent_manager.is_running and not self.agent_manager.is_monitoring:
                                 self.logger.warning("⚠️ Agent monitoring appears inactive")
                                 self.health_status['overall'] = 'monitoring_inactive'
+                            elif self.agent_manager.is_running and self.agent_manager.is_monitoring:
+                                self.health_status['overall'] = 'running'
                     
                     await asyncio.sleep(30)  # Check every 30 seconds
                     

@@ -216,7 +216,7 @@ class ServerCommunication:
             
             # ✅ FIXED: Handle both dict and object inputs
             if hasattr(registration_data, 'to_dict'):
-            payload = registration_data.to_dict()
+                payload = registration_data.to_dict()
             elif isinstance(registration_data, dict):
                 payload = registration_data
             else:
@@ -505,7 +505,7 @@ class ServerCommunication:
                                     return [convert_datetime(item) for item in obj]
                                 elif isinstance(obj, datetime):
                                     return obj.isoformat()
-                else:
+                                else:
                                     return obj
                             
                             payload = convert_datetime(payload)
@@ -537,7 +537,7 @@ class ServerCommunication:
                 except Exception as json_error:
                     text = await response.text()
                     self.logger.debug(f"✅ Success response (text): {text}")
-                        return {'success': True, 'message': text}
+                    return {'success': True, 'message': text}
             
             elif response.status == 422:
                 # ✅ FIXED: Handle validation errors specifically

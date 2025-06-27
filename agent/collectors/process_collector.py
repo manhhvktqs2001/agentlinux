@@ -150,12 +150,12 @@ class LinuxProcessCollector(LinuxBaseCollector):
                         if pid not in self.monitored_processes:
                             # ✅ OPTIMIZATION: Additional lifetime check
                             if self._check_process_lifetime(proc_info):
-                            event = await self._create_process_start_event(proc_info)
+                                event = await self._create_process_start_event(proc_info)
                                 if event and self._is_event_worth_sending(event):
                                     events.append(event)
                                     self.stats['process_creation_events'] += 1
                                     self._increment_event_count()
-                        
+                                    
                                     # ✅ OPTIMIZATION: Stop if we hit batch limit
                                     if len(events) >= self.max_events_per_batch:
                                         break
@@ -179,17 +179,17 @@ class LinuxProcessCollector(LinuxBaseCollector):
             
             # ✅ OPTIMIZATION: Only process terminations for interesting processes
             if len(events) < self.max_events_per_batch:
-            terminated_pids = self.last_scan_pids - current_pids
+                terminated_pids = self.last_scan_pids - current_pids
                 for pid in list(terminated_pids)[:2]:  # Limit to 2 termination events
-                if pid in self.monitored_processes:
+                    if pid in self.monitored_processes:
                         proc_data = self.monitored_processes[pid]
                         if self._is_interesting_process(proc_data.get('name', '')):
                             event = await self._create_process_end_event(pid, proc_data)
                             if event and self._is_event_worth_sending(event):
-                        events.append(event)
-                        self.stats['process_termination_events'] += 1
+                                events.append(event)
+                                self.stats['process_termination_events'] += 1
                                 self._increment_event_count()
-                    del self.monitored_processes[pid]
+                        del self.monitored_processes[pid]
             
             # Update tracking
             self.last_scan_pids = current_pids
@@ -280,7 +280,7 @@ class LinuxProcessCollector(LinuxBaseCollector):
             
             # Kernel threads don't have command lines
             if not cmdline or len(cmdline) == 0:
-                    return True
+                return True
             
             # Check common kernel thread patterns
             kernel_patterns = ['kthreadd', 'ksoftirqd', 'migration', 'rcu_', 'watchdog', 'kworker']

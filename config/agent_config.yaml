@@ -273,3 +273,117 @@ notifications:
   # Alert methods
   log_alerts: true
   console_alerts: true
+
+# Linux EDR Agent Configuration - OPTIMIZED VERSION
+# Enhanced stability, performance monitoring, and spam reduction
+
+agent:
+  # Agent identification
+  agent_id: null  # Will be auto-generated if not set
+  agent_name: "Linux-EDR-Agent"
+  agent_version: "2.1.0-Linux-Optimized"
+  
+  # Performance settings
+  num_workers: 2
+  num_batch_processors: 1
+  batch_size: 10
+  batch_timeout: 5
+  individual_threshold: 5  # Use individual submission for small batches
+  disable_batch_submission: true  # Force individual submission for better reliability
+  
+  # Collection intervals (optimized to reduce spam)
+  process_collection_interval: 30  # Increased from 10s to 30s
+  network_collection_interval: 60  # Increased from 30s to 60s
+  system_collection_interval: 120  # Increased from 60s to 120s
+  authentication_collection_interval: 30
+  file_collection_interval: 300  # Increased from 120s to 300s
+  
+  # Collector enablement
+  enable_process_collector: true
+  enable_network_collector: true
+  enable_authentication_collector: true
+  enable_system_collector: true
+  enable_file_collector: false  # Disabled to reduce spam
+  
+  # Event filtering and rate limiting
+  enable_event_filtering: true
+  enable_rate_limiting: true
+  max_events_per_minute: 100
+  deduplication_window: 300  # 5 minutes
+  
+  # Log monitoring configuration
+  enable_realtime_logs: true
+  log_batch_size: 10
+  log_sending_interval: 5  # Send logs every 5 seconds
+  enable_thread_logs: true
+  enable_file_monitoring: true
+  
+  # Log file monitoring
+  monitored_log_files:
+    - path: "/var/log/auth.log"
+      type: "authentication"
+      enabled: true
+    - path: "/var/log/syslog"
+      type: "system"
+      enabled: true
+    - path: "/var/log/kern.log"
+      type: "kernel"
+      enabled: true
+    - path: "/var/log/dmesg"
+      type: "kernel"
+      enabled: false  # Can be very noisy
+    - path: "/var/log/btmp"
+      type: "authentication"
+      enabled: true
+    - path: "/var/log/wtmp"
+      type: "authentication"
+      enabled: true
+    - path: "/var/log/faillog"
+      type: "authentication"
+      enabled: true
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/agent.log"
+  max_size: "10MB"
+  backup_count: 5
+  enable_console: true
+  enable_file: true
+  
+  # Thread-specific logging
+  enable_thread_logging: true
+  thread_log_format: "%(asctime)s - %(threadName)s - %(levelname)s - %(message)s"
+
+# Event processing optimization
+event_processing:
+  enable_parallel_processing: true
+  max_queue_size: 1000
+  worker_timeout: 30
+  enable_event_validation: true
+  enable_event_deduplication: true
+  deduplication_timeout: 300  # 5 minutes
+
+# Security settings
+security:
+  enable_encryption: false  # Disabled for local development
+  enable_anti_tamper: false  # Disabled for local development
+  enable_audit_logging: true
+  audit_log_file: "logs/audit.log"
+
+# Performance monitoring
+performance:
+  enable_monitoring: true
+  monitoring_interval: 60
+  enable_memory_tracking: true
+  enable_cpu_tracking: true
+  enable_disk_tracking: true
+  enable_network_tracking: true
+
+# Health monitoring
+health:
+  enable_health_checks: true
+  health_check_interval: 30
+  enable_collector_health: true
+  enable_communication_health: true
+  enable_system_health: true

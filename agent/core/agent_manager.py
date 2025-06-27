@@ -189,7 +189,7 @@ class LinuxAgentManager:
             self.logger.info(f"✅ System info collected: {system_info['hostname']} ({system_info['distribution']})")
             return system_info
                 
-            except Exception as e:
+        except Exception as e:
             self.logger.error(f"❌ Error getting system info: {e}")
             return {
                 'hostname': 'unknown',
@@ -326,22 +326,22 @@ class LinuxAgentManager:
     
     async def _initialize_event_processor(self):
         """Initialize Event Processor with validation"""
-            try:
-                self.logger.info("⚙️ Initializing Event Processor...")
-                self.event_processor = EventProcessor(
-                    self.config_manager, 
-                    self.communication
-                )
+        try:
+            self.logger.info("⚙️ Initializing Event Processor...")
+            self.event_processor = EventProcessor(
+                self.config_manager, 
+                self.communication
+            )
+
+            if self.agent_id:
+                self.event_processor.set_agent_id(self.agent_id)
+                self.logger.info(f"✅ Event Processor initialized with agent_id: {self.agent_id[:8]}...")
+            else:
+                raise Exception("No agent_id available for event processor")
     
-                if self.agent_id:
-                    self.event_processor.set_agent_id(self.agent_id)
-                    self.logger.info(f"✅ Event Processor initialized with agent_id: {self.agent_id[:8]}...")
-                else:
-                    raise Exception("No agent_id available for event processor")
-        
-            except Exception as e:
-                self.logger.error(f"❌ Event processor initialization failed: {e}")
-                raise Exception(f"Event processor failed: {e}")
+        except Exception as e:
+            self.logger.error(f"❌ Event processor initialization failed: {e}")
+            raise Exception(f"Event processor failed: {e}")
             
     async def _initialize_collectors_optimized(self):
         """Initialize collectors with optimization and selective enabling"""
@@ -403,7 +403,7 @@ class LinuxAgentManager:
                             self.health_checks['collectors'][collector_name] = False
                             # Continue with other collectors instead of failing completely
                             
-            except Exception as e:
+                    except Exception as e:
                         self.logger.error(f"❌ Error creating {collector_name} collector: {e}")
                         self.health_checks['collectors'][collector_name] = False
                 else:
@@ -474,7 +474,7 @@ class LinuxAgentManager:
             
             # Register with server if not already registered
             if not self.is_registered:
-            await self._register_with_server()
+                await self._register_with_server()
             
             # Ensure agent_id is available
             if not self.agent_id:
@@ -660,11 +660,11 @@ class LinuxAgentManager:
         try:
             while self.is_running and not self.is_paused:
                 try:
-            # Get system metrics
-            cpu_percent = psutil.cpu_percent(interval=1)
-            memory = psutil.virtual_memory()
-            disk = psutil.disk_usage('/')
-            
+                    # Get system metrics
+                    cpu_percent = psutil.cpu_percent(interval=1)
+                    memory = psutil.virtual_memory()
+                    disk = psutil.disk_usage('/')
+                    
                     # Update system stats
                     self.system_stats.update({
                         'cpu_usage': cpu_percent,
@@ -688,8 +688,8 @@ class LinuxAgentManager:
                     # Get system monitor interval from config
                     monitor_interval = self.config.get('agent', {}).get('system_monitor_interval', 60)
                     await asyncio.sleep(monitor_interval)
-            
-        except Exception as e:
+                    
+                except Exception as e:
                     self.logger.error(f"❌ System monitoring error: {e}")
                     await asyncio.sleep(60)
                     
@@ -772,7 +772,7 @@ class LinuxAgentManager:
                     
                     await asyncio.sleep(30)  # Check every 30 seconds
                     
-        except Exception as e:
+                except Exception as e:
                     self.logger.error(f"❌ Health monitoring error: {e}")
                     await asyncio.sleep(30)
                     
