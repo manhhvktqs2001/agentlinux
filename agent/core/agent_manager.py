@@ -15,6 +15,8 @@ import pwd
 from datetime import datetime
 from typing import Optional, Dict, List, Any
 from pathlib import Path
+import subprocess
+import socket
 
 from agent.core.communication import ServerCommunication
 from agent.core.config_manager import ConfigManager
@@ -22,6 +24,7 @@ from agent.core.event_processor import EventProcessor
 from agent.collectors.process_collector import LinuxProcessCollector
 from agent.collectors.file_collector import LinuxFileCollector
 from agent.collectors.network_collector import LinuxNetworkCollector
+from agent.collectors.authentication_collector import LinuxAuthenticationCollector
 from agent.schemas.agent_data import AgentRegistrationData, AgentHeartbeatData
 
 class LinuxAgentManager:
@@ -311,6 +314,21 @@ class LinuxAgentManager:
                 except Exception as e:
                     self.logger.error(f"❌ Linux network collector initialization failed: {e}")
             
+            # Authentication collector
+            if collection_config.get('collect_authentication', True):
+                try:
+                    self.logger.info("🔐 Initializing Linux Authentication Collector...")
+                    self.collectors['authentication'] = LinuxAuthenticationCollector(self.config_manager)
+                    self.collectors['authentication'].set_event_processor(self.event_processor)
+                    # FIXED: Set agent_id immediately
+                    if self.agent_id:
+                        self.collectors['authentication'].set_agent_id(self.agent_id)
+                        self.logger.info(f"✅ Authentication collector agent_id set: {self.agent_id[:8]}...")
+                    await self.collectors['authentication'].initialize()
+                    self.logger.info("✅ Linux authentication collector initialized")
+                except Exception as e:
+                    self.logger.error(f"❌ Linux authentication collector initialization failed: {e}")
+            
             self.logger.info(f"🎉 {len(self.collectors)} Linux collectors initialized successfully")
             
         except Exception as e:
@@ -418,6 +436,10 @@ class LinuxAgentManager:
         try:
             self.logger.info("📡 Registering Linux agent with EDR server...")
             
+            # Get domain and log it
+            domain = self._get_domain()
+            self.logger.info(f"🌐 Domain for registration: {domain}")
+            
             # Create registration data with the existing agent_id
             registration_data = AgentRegistrationData(
                 hostname=self.system_info['hostname'],
@@ -427,7 +449,7 @@ class LinuxAgentManager:
                 architecture=self.system_info.get('architecture', 'Unknown'),
                 agent_version='2.1.0-Linux',
                 mac_address=self._get_mac_address(),
-                domain=self._get_domain(),
+                domain=domain,
                 install_path=str(Path(__file__).resolve().parent.parent.parent),
                 kernel_version=self.system_info.get('kernel'),
                 distribution=self.system_info.get('distribution'),
@@ -436,6 +458,14 @@ class LinuxAgentManager:
                 current_user=self.system_info.get('current_user'),
                 effective_user=self.system_info.get('effective_user')
             )
+            
+            # Log registration data for debugging
+            self.logger.info(f"📋 Registration data:")
+            self.logger.info(f"   🆔 Agent ID: {self.agent_id}")
+            self.logger.info(f"   🖥️ Hostname: {registration_data.hostname}")
+            self.logger.info(f"   🌐 Domain: {registration_data.domain}")
+            self.logger.info(f"   🐧 OS: {registration_data.operating_system}")
+            self.logger.info(f"   🔧 Kernel: {registration_data.os_version}")
             
             # Send registration request
             response = await self.communication.register_agent(registration_data)
@@ -505,19 +535,23 @@ class LinuxAgentManager:
             return None
     
     def _get_domain(self) -> Optional[str]:
-        """Get domain name (Linux-specific)"""
+        """Get domain name (Linux-specific) - IMPROVED"""
         try:
             # Try to get domain from hostname
             import socket
             fqdn = socket.getfqdn()
             if '.' in fqdn:
-                return fqdn.split('.', 1)[1]
+                domain = fqdn.split('.', 1)[1]
+                if domain and domain != 'localdomain':
+                    self.logger.info(f"🌐 Found domain from FQDN: {domain}")
+                    return domain
             
             # Try to read from /etc/domain
             if os.path.exists('/etc/domain'):
                 with open('/etc/domain', 'r') as f:
                     domain = f.read().strip()
-                    if domain:
+                    if domain and domain != 'localdomain':
+                        self.logger.info(f"🌐 Found domain from /etc/domain: {domain}")
                         return domain
             
             # Try to get from resolv.conf
@@ -525,12 +559,64 @@ class LinuxAgentManager:
                 with open('/etc/resolv.conf', 'r') as f:
                     for line in f:
                         if line.startswith('domain '):
-                            return line.split()[1].strip()
+                            domain = line.split()[1].strip()
+                            if domain and domain != 'localdomain':
+                                self.logger.info(f"🌐 Found domain from resolv.conf: {domain}")
+                                return domain
             
-            return None
+            # Try to get from systemd-resolved
+            try:
+                result = subprocess.run(['systemd-resolve', '--status'], 
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    for line in result.stdout.split('\n'):
+                        if 'Current DNS Domain:' in line:
+                            domain = line.split('Current DNS Domain:')[1].strip()
+                            if domain and domain != 'localdomain':
+                                self.logger.info(f"🌐 Found domain from systemd-resolve: {domain}")
+                                return domain
+            except:
+                pass
+            
+            # Try to get from hostname command
+            try:
+                result = subprocess.run(['hostname', '-d'], 
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    domain = result.stdout.strip()
+                    if domain and domain != 'localdomain':
+                        self.logger.info(f"🌐 Found domain from hostname -d: {domain}")
+                        return domain
+            except:
+                pass
+            
+            # Try to get from dnsdomainname command
+            try:
+                result = subprocess.run(['dnsdomainname'], 
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    domain = result.stdout.strip()
+                    if domain and domain != 'localdomain':
+                        self.logger.info(f"🌐 Found domain from dnsdomainname: {domain}")
+                        return domain
+            except:
+                pass
+            
+            # Fallback: return hostname as domain if no domain found
+            hostname = socket.gethostname()
+            if hostname and hostname != 'localhost':
+                self.logger.info(f"🌐 Using hostname as domain: {hostname}")
+                return hostname
+            
+            # Final fallback: return a default domain
+            default_domain = "local.linux"
+            self.logger.info(f"🌐 Using default domain: {default_domain}")
+            return default_domain
+            
         except Exception as e:
             self.logger.debug(f"Could not get domain: {e}")
-            return None
+            # Return a meaningful default instead of None
+            return "local.linux"
     
     async def _start_collectors(self):
         """Start all Linux collectors"""

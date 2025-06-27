@@ -213,6 +213,7 @@ class LinuxServerCommunication:
             
             self.logger.info(f"📡 Attempting Linux agent registration (attempt {self.registration_attempts})")
             self.logger.debug(f"📦 Registration payload: hostname={registration_payload['hostname']}, platform={registration_payload['platform']}")
+            self.logger.info(f"🌐 Domain in registration payload: {registration_payload.get('domain', 'NOT_SET')}")
             
             response = await self._make_request_with_retry('POST', url, registration_payload)
             

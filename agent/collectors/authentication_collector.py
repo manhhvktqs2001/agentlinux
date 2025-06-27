@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 
 from agent.collectors.base_collector import BaseCollector
-from agent.schemas.events import EventData, EventType, EventSeverity
+from agent.schemas.events import EventData, EventSeverity
 
 @dataclass
 class AuthEvent:
@@ -449,16 +449,22 @@ class LinuxAuthenticationCollector(BaseCollector):
             
             # Create event data
             event_data = EventData(
-                event_type=EventType.AUTHENTICATION,
+                event_type="Authentication",
+                event_action=auth_event.event_type,
                 severity=EventSeverity.INFO if auth_event.success else EventSeverity.MEDIUM,
-                source="authentication_collector",
-                data={
+                login_user=auth_event.user,
+                login_type=auth_event.event_type,
+                login_result="Success" if auth_event.success else "Failed",
+                source_ip=auth_event.source_ip,
+                description=f"Authentication {auth_event.event_type}: {auth_event.user} from {auth_event.source_ip or 'local'}",
+                raw_event_data={
                     'auth_event_type': auth_event.event_type,
                     'user': auth_event.user,
                     'source_ip': auth_event.source_ip,
                     'success': auth_event.success,
                     'timestamp': auth_event.timestamp.isoformat(),
-                    'details': auth_event.details
+                    'details': auth_event.details,
+                    'raw_message': auth_event.raw_message
                 }
             )
             
@@ -626,10 +632,14 @@ class LinuxAuthenticationCollector(BaseCollector):
         try:
             # Create event for successful login
             event_data = EventData(
-                event_type=EventType.AUTHENTICATION,
+                event_type="Authentication",
+                event_action="wtmp_login",
                 severity=EventSeverity.INFO,
-                source="authentication_collector",
-                data={
+                login_user=login_info['user'],
+                login_type="wtmp_login",
+                login_result="Success",
+                description=f"WTMP login: {login_info['user']} from {login_info['source']}",
+                raw_event_data={
                     'auth_event_type': 'wtmp_login',
                     'user': login_info['user'],
                     'tty': login_info['tty'],
@@ -695,10 +705,14 @@ class LinuxAuthenticationCollector(BaseCollector):
         try:
             # Create event for failed login
             event_data = EventData(
-                event_type=EventType.AUTHENTICATION,
+                event_type="Authentication",
+                event_action="btmp_failed",
                 severity=EventSeverity.MEDIUM,
-                source="authentication_collector",
-                data={
+                login_user=failed_info['user'],
+                login_type="btmp_failed",
+                login_result="Failed",
+                description=f"BTMP failed login: {failed_info['user']} from {failed_info['source']}",
+                raw_event_data={
                     'auth_event_type': 'btmp_failed',
                     'user': failed_info['user'],
                     'tty': failed_info['tty'],
@@ -889,10 +903,11 @@ class LinuxAuthenticationCollector(BaseCollector):
         """Report security event"""
         try:
             event_data = EventData(
-                event_type=EventType.AUTHENTICATION_SECURITY,
+                event_type="Authentication",
+                event_action=event_type,
                 severity=severity,
-                source="authentication_collector",
-                data={
+                description=f"Security event: {event_type}",
+                raw_event_data={
                     'security_event_type': event_type,
                     'details': details
                 }
