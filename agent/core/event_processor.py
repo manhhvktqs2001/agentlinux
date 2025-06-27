@@ -173,21 +173,18 @@ class EventProcessor:
         """Add event with priority queuing and improved database validation"""
         try:
             start_time = time.time()
-            
+            self._safe_log("info", f"[DEBUG] Collector gửi event: {getattr(event_data, 'event_type', None)} {getattr(event_data, 'event_action', None)} agent_id={getattr(event_data, 'agent_id', None)}")
             # Ensure agent_id and validate
             if self.agent_id and not event_data.agent_id:
                 event_data.agent_id = self.agent_id
-            
             if not event_data.agent_id:
                 self.stats.events_failed += 1
                 self.stats.schema_validation_errors += 1
                 self._safe_log("error", "❌ Event missing agent_id - DATABASE VALIDATION FAILED")
                 return
-            
             # Add Linux platform identifier
             if not event_data.raw_event_data:
                 event_data.raw_event_data = {}
-            
             if isinstance(event_data.raw_event_data, str):
                 try:
                     raw_data = json.loads(event_data.raw_event_data)
@@ -195,15 +192,12 @@ class EventProcessor:
                     raw_data = {'original_data': event_data.raw_event_data}
             else:
                 raw_data = event_data.raw_event_data or {}
-            
             raw_data.update({
                 'platform': 'linux',
                 'processor_version': 'enhanced_v2.1',
                 'database_compatible': True
             })
-            
-            event_data.raw_event_data = json.dumps(raw_data, default=str)
-            
+            event_data.raw_event_data = raw_data
             # Enhanced: Database schema validation
             if self._database_validation_enabled:
                 validation_result = await self._validate_event_schema(event_data)
@@ -211,28 +205,23 @@ class EventProcessor:
                     self.stats.schema_validation_errors += 1
                     self._safe_log("error", f"❌ Event schema validation failed: {validation_result['error']}")
                     return
-            
             # Update stats by severity
             self._update_severity_stats(event_data.severity)
             self.stats.events_collected += 1
-            
             # Priority-based queuing
             priority = self._determine_event_priority(event_data)
             queue_success = self._add_to_priority_queue(event_data, priority)
-            
             if not queue_success:
                 self.stats.events_failed += 1
                 self._safe_log("warning", f"⚠️ Event queue full - {priority} priority")
                 return
-            
+            self._safe_log("info", f"[DEBUG] Event đã vào queue {priority}, sẽ gửi lên server khi tới lượt.")
             # Immediate processing for critical events
             if priority == 'critical' and self.agent_id and self.communication:
                 await self._process_critical_event_immediately(event_data)
-            
             # Record processing time
             processing_time = time.time() - start_time
             self._event_processing_times.append(processing_time)
-            
         except Exception as e:
             self.stats.events_failed += 1
             self._safe_log("error", f"❌ Linux event processing error: {e}")
@@ -374,10 +363,11 @@ class EventProcessor:
         """Process critical events immediately"""
         try:
             if not self.communication or not self.communication.is_connected():
+                self._safe_log("warning", "⚠️ Communication not connected for critical event!")
                 return
-            
+            self._safe_log("info", f"[DEBUG] Sending CRITICAL event to server: {event_data.agent_id} {event_data.event_type} {event_data.event_action}")
             success, response, error = await self.communication.submit_event(event_data)
-            
+            self._safe_log("info", f"[DEBUG] Result: success={success}, error={error}")
             if success and response:
                 self.stats.events_sent += 1
                 self.stats.last_event_sent = datetime.now()
@@ -391,7 +381,6 @@ class EventProcessor:
                     'priority': 'critical'
                 })
                 self.stats.events_failed += 1
-                
         except Exception as e:
             self._safe_log("error", f"❌ Critical event immediate processing failed: {e}")
     
@@ -427,17 +416,16 @@ class EventProcessor:
     async def _process_queue(self, queue: deque, priority: str, max_events: int = 5) -> int:
         """Process events from a priority queue"""
         processed = 0
-        
         try:
             while queue and processed < max_events:
                 if not self.communication or not self.communication.is_connected():
+                    self._safe_log("warning", f"⚠️ Communication not connected for {priority} event!")
                     break
-                
                 event_info = queue.popleft()
                 event_data = event_info['event']
-                
+                self._safe_log("info", f"[DEBUG] Sending {priority.upper()} event to server: {event_data.agent_id} {event_data.event_type} {event_data.event_action}")
                 success, response, error = await self.communication.submit_event(event_data)
-                
+                self._safe_log("info", f"[DEBUG] Result: success={success}, error={error}")
                 if success and response:
                     self.stats.events_sent += 1
                     self.stats.last_event_sent = datetime.now()
@@ -451,10 +439,8 @@ class EventProcessor:
                         self._failed_events_queue.append(event_info)
                     self.stats.events_failed += 1
                     self._consecutive_failures += 1
-                    
         except Exception as e:
             self._safe_log("error", f"❌ Error processing {priority} queue: {e}")
-        
         return processed
     
     async def _enhanced_retry_loop(self):

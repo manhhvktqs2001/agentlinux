@@ -1,6 +1,6 @@
 # agent/core/agent_manager.py - FIXED Linux Agent Manager
 """
-Linux Agent Manager - FIXED VERSION
+Linux Agent Manager - COMPLETE FIX for all agent_id issues
 Core agent management and coordination for Linux systems with proper agent_id handling
 """
 
@@ -25,7 +25,7 @@ from agent.collectors.network_collector import LinuxNetworkCollector
 from agent.schemas.agent_data import AgentRegistrationData, AgentHeartbeatData
 
 class LinuxAgentManager:
-    """Linux Agent Manager - FIXED VERSION with proper agent_id handling"""
+    """Linux Agent Manager - COMPLETE FIX for all agent_id issues"""
     
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
@@ -38,10 +38,11 @@ class LinuxAgentManager:
         self.is_monitoring = False
         self.is_paused = False
         
-        # FIXED: Agent identification with proper persistence
-        self.agent_id_file = os.path.join(os.path.dirname(__file__), 'agent_id.txt')
+        # FIXED: Agent identification with persistent storage
+        self.agent_id_file = os.path.join(os.path.dirname(__file__), '..', '..', '.agent_id')
         self.agent_id = self._load_or_create_agent_id()
         self.is_registered = False
+        self.registration_confirmed = False
         
         # Linux system information
         self.system_info = self._get_linux_system_info()
@@ -61,7 +62,11 @@ class LinuxAgentManager:
         self.requires_root = True
         self.has_root_privileges = os.geteuid() == 0
         
-        self.logger.info(f"🐧 Linux Agent Manager initialized")
+        # FIXED: Event validation tracking
+        self.events_without_agent_id = 0
+        self.total_events_processed = 0
+        
+        self.logger.info(f"🐧 Linux Agent Manager initialized - COMPLETE FIX")
         self.logger.info(f"   🆔 Agent ID: {self.agent_id}")
         self.logger.info(f"   📊 System: {self.system_info.get('distribution', 'Unknown')} {self.system_info.get('version', '')}")
         self.logger.info(f"   🔒 Root privileges: {self.has_root_privileges}")

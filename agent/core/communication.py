@@ -1,7 +1,7 @@
 # agent/core/communication.py - FIXED Linux Communication
 """
-Linux Server Communication - FIXED TO MATCH DATABASE SCHEMA
-Handle communication with EDR server with proper payload format
+Linux Server Communication - FIXED to handle registration properly
+Enhanced error handling and agent ID management
 """
 
 import aiohttp
@@ -20,7 +20,7 @@ from agent.schemas.agent_data import AgentRegistrationData, AgentHeartbeatData
 from agent.schemas.events import EventData
 
 class LinuxServerCommunication:
-    """Linux Server Communication - FIXED FOR DATABASE COMPATIBILITY"""
+    """Linux Server Communication - FIXED VERSION"""
     
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
@@ -71,10 +71,15 @@ class LinuxServerCommunication:
         self.alerts_received_from_server = 0
         self.last_threat_detection = None
         
+        # FIXED: Registration tracking
+        self.registered_agent_id = None
+        self.registration_attempts = 0
+        self.max_registration_attempts = 3
+        
         self.logger.info("🐧 Linux Communication initialized - FIXED for database compatibility")
     
     async def initialize(self):
-        """Initialize Linux communication with server detection"""
+        """Initialize Linux communication with enhanced server detection"""
         try:
             # Auto-detect working server
             self.working_server = await self._detect_working_server()
@@ -153,350 +158,241 @@ class LinuxServerCommunication:
             self.offline_mode = True
             self._setup_offline_mode()
     
-    def _setup_offline_mode(self):
-        """Setup offline mode with Linux-specific settings"""
-        self.logger.info("🔄 Setting up Linux offline mode...")
-        self.offline_events_queue = []
-        
-        # Only start periodic detection task if not already started
-        if not hasattr(self, '_periodic_task_started'):
-            self._periodic_task_started = True
-            asyncio.create_task(self._periodic_server_detection())
-            self.logger.info("🔄 Periodic server detection task started")
-    
-    async def _periodic_server_detection(self):
-        """Periodically check for server availability - Linux optimized"""
-        last_reconnection_attempt = 0
-        reconnection_interval = 3  # Try every 3 seconds when offline
-        
-        while True:
-            try:
-                current_time = time.time()
-                
-                # If offline, continuously try to reconnect
-                if self.offline_mode:
-                    if current_time - last_reconnection_attempt >= reconnection_interval:
-                        self.logger.debug("🔄 Attempting to reconnect to server...")
-                        last_reconnection_attempt = current_time
-                        
-                        if await self.force_reconnection():
-                            self.logger.info("✅ Successfully reconnected to server!")
-                            await self._send_queued_events()
-                        else:
-                            self.logger.debug("📡 Reconnection failed - will try again")
-                    
-                    await asyncio.sleep(1)
-                
-                # If online, check connection every 15 seconds
-                else:
-                    await self._detect_connection_loss()
-                    await asyncio.sleep(15)
-                    
-            except Exception as e:
-                self.logger.debug(f"Periodic server detection error: {e}")
-                await asyncio.sleep(3)
-    
-    async def _send_queued_events(self):
-        """Send queued offline events"""
-        if not self.offline_events_queue:
-            return
-        
-        self.logger.info(f"📤 Sending {len(self.offline_events_queue)} queued events...")
-        events_to_send = self.offline_events_queue.copy()
-        self.offline_events_queue.clear()
-        sent_count = 0
-        
-        for event_data in events_to_send:
-            try:
-                response = await self._make_request_with_retry('POST', f"{self.base_url}/api/v1/events/submit", event_data)
-                if response:
-                    sent_count += 1
-                else:
-                    self.offline_events_queue.append(event_data)
-            except:
-                self.offline_events_queue.append(event_data)
-        
-        self.logger.info(f"✅ Sent {sent_count}/{len(events_to_send)} queued events")
-    
-    async def _detect_working_server(self):
-        """Auto-detect working EDR server - Linux optimized"""
-        potential_servers = [
-            {'host': 'localhost', 'port': 5000, 'name': 'Local Server'},
-            {'host': '127.0.0.1', 'port': 5000, 'name': 'Loopback Server'},
-            {'host': '192.168.20.85', 'port': 5000, 'name': 'Configured Server'},
-            {'host': 'localhost', 'port': 8000, 'name': 'Alt Port 8000'},
-            {'host': '127.0.0.1', 'port': 3000, 'name': 'Alt Port 3000'},
-        ]
-        
-        for server in potential_servers:
-            if await self._test_server_connection(server):
-                self.logger.info(f"✅ Found working server: {server['name']} ({server['host']}:{server['port']})")
-                return server
-        
-        return None
-    
-    async def _test_server_connection(self, server):
-        """Test connection to a specific server - Linux optimized"""
-        try:
-            host = server['host']
-            port = server['port']
-            
-            # Test TCP connection with Linux socket
-            def test_tcp():
-                try:
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock.settimeout(2)
-                    result = sock.connect_ex((host, port))
-                    sock.close()
-                    return result == 0
-                except:
-                    return False
-            
-            tcp_success = await asyncio.to_thread(test_tcp)
-            return tcp_success
-            
-        except Exception as e:
-            return False
-    
-    async def _test_connection(self):
-        """Test connection to selected server"""
+    async def register_agent(self, registration_data: AgentRegistrationData) -> Optional[Dict]:
+        """Register Linux agent with EDR server - FIXED with better error handling"""
         try:
             if not self.working_server:
-                return False
+                self.logger.warning("⚠️ No server available for Linux agent registration")
+                return None
             
-            test_endpoints = ['/health', '/api/v1/status', '/', '/status']
+            self.registration_attempts += 1
+            if self.registration_attempts > self.max_registration_attempts:
+                self.logger.error(f"❌ Max registration attempts ({self.max_registration_attempts}) exceeded")
+                return None
             
-            for endpoint in test_endpoints:
-                try:
-                    url = f"{self.base_url}{endpoint}"
-                    response = await self._make_request_internal('GET', url, timeout_override=5)
+            url = f"{self.base_url}/api/v1/agents/register"
+            
+            # FIXED: Create robust registration payload
+            registration_payload = {
+                # REQUIRED fields with validation
+                'hostname': registration_data.hostname or 'unknown-linux-host',
+                'ip_address': registration_data.ip_address or '127.0.0.1',
+                'operating_system': registration_data.operating_system or 'Linux Unknown',
+                'os_version': registration_data.os_version or platform.release(),
+                'architecture': registration_data.architecture or platform.machine(),
+                'agent_version': '2.1.0-Linux',
+                
+                # OPTIONAL fields
+                'mac_address': registration_data.mac_address,
+                'domain': registration_data.domain,
+                'install_path': registration_data.install_path,
+                
+                # Default values for required fields
+                'status': 'Active',
+                'cpu_usage': 0.0,
+                'memory_usage': 0.0,
+                'disk_usage': 0.0,
+                'network_latency': 0,
+                'monitoring_enabled': True,
+                
+                # Linux-specific metadata
+                'platform': 'linux',
+                'kernel_version': registration_data.kernel_version,
+                'distribution': registration_data.distribution,
+                'distribution_version': registration_data.distribution_version,
+                'has_root_privileges': registration_data.has_root_privileges,
+                'current_user': registration_data.current_user,
+                'effective_user': registration_data.effective_user,
+                'user_groups': registration_data.user_groups,
+                'capabilities': registration_data.capabilities,
+                
+                # Registration metadata
+                'registration_attempt': self.registration_attempts,
+                'client_timestamp': datetime.now().isoformat()
+            }
+            
+            self.logger.info(f"📡 Attempting Linux agent registration (attempt {self.registration_attempts})")
+            self.logger.debug(f"📦 Registration payload: hostname={registration_payload['hostname']}, platform={registration_payload['platform']}")
+            
+            response = await self._make_request_with_retry('POST', url, registration_payload)
+            
+            if response:
+                if response.get('success') or response.get('agent_id'):
+                    # Extract agent_id from response
+                    agent_id = response.get('agent_id')
+                    if agent_id:
+                        self.registered_agent_id = agent_id
+                        self.logger.info(f"✅ Linux agent registered successfully: {agent_id}")
+                        return response
+                    else:
+                        self.logger.error(f"❌ Registration response missing agent_id: {response}")
+                        return None
+                else:
+                    error_msg = response.get('error', 'Unknown registration error')
+                    self.logger.error(f"❌ Linux agent registration failed: {error_msg}")
                     
-                    if response is not None:
-                        self.last_successful_connection = time.time()
-                        self.successful_connections += 1
-                        return True
-                except:
-                    continue
-            
-            return False
+                    # FIXED: Handle specific error cases
+                    if 'agent already exists' in error_msg.lower():
+                        # Try to extract existing agent_id if provided
+                        existing_id = response.get('existing_agent_id')
+                        if existing_id:
+                            self.registered_agent_id = existing_id
+                            self.logger.info(f"📋 Using existing agent_id: {existing_id}")
+                            return {'success': True, 'agent_id': existing_id}
+                    
+                    return None
+            else:
+                self.logger.error(f"❌ No response from server during registration")
+                return None
             
         except Exception as e:
-            return False
+            self.logger.error(f"❌ Linux agent registration error: {e}")
+            return None
     
     async def submit_event(self, event_data: EventData) -> tuple[bool, Optional[Dict], Optional[str]]:
-        """Submit event to server with database-compatible payload"""
+        """Submit event to server with enhanced validation and auto re-register if agent not found"""
         try:
-            # FIX: Validate agent_id before submission
+            # FIXED: Enhanced agent_id validation
             if not event_data.agent_id:
                 self.logger.error("❌ CRITICAL: Event missing agent_id - cannot submit to server")
                 return False, None, "Event missing agent_id"
             # Test connection before sending
             if not await self.test_connection():
-                self.logger.debug("📡 Server not connected - skipping event submission")
-                return False, None, "Server not connected"
-            
+                self.logger.debug("📡 Server not connected - queuing event for later")
+                # Add to offline queue if not too full
+                if len(self.offline_events_queue) < self.max_offline_events:
+                    self.offline_events_queue.append(event_data.to_dict())
+                return False, None, "Server not connected - event queued"
             if self.offline_mode:
                 return False, None, "Server offline"
-            
             if not self.working_server:
                 return False, None, "No working server"
-            
-            # FIXED: Use event's to_dict() method which now returns snake_case fields
+            # FIXED: Use event's to_dict() method with validation
             payload = event_data.to_dict()
-            
+            self.logger.info(f"[DEBUG] Payload to send: {json.dumps(payload)[:500]}")
             if 'error' in payload:
+                self.logger.error(f"[DEBUG] Payload error: {payload['error']}")
                 return False, None, f"Event payload error: {payload['error']}"
-            
             if not payload.get('agent_id'):
+                self.logger.error("[DEBUG] Payload missing agent_id after conversion!")
                 return False, None, "Event payload conversion failed - missing agent_id"
-            
-            # Send to server
+            # Send to server with better error handling
             url = f"{self.base_url}/api/v1/events/submit"
+            response = await self._make_request_with_retry('POST', url, payload)
+            self.logger.info(f"[DEBUG] Server response: {str(response)[:500]}")
+            # --- BỔ SUNG: Nếu server trả về lỗi "Agent not found", tự động re-register ---
+            if response and response.get('error') and 'agent not found' in response.get('error', '').lower():
+                self.logger.warning("🔄 Agent not found - auto re-registering with server...")
+                from agent.schemas.agent_data import AgentRegistrationData
+                # Tạo lại registration_data từ event hoặc config
+                registration_data = AgentRegistrationData(
+                    hostname=payload.get('hostname', 'unknown-linux-host'),
+                    ip_address=payload.get('ip_address', '127.0.0.1'),
+                    operating_system=payload.get('operating_system', 'Linux Unknown'),
+                    os_version=payload.get('os_version', ''),
+                    architecture=payload.get('architecture', ''),
+                    agent_version=payload.get('agent_version', '2.1.0-Linux')
+                )
+                reg_response = await self.register_agent(registration_data)
+                if reg_response and reg_response.get('agent_id'):
+                    # Cập nhật agent_id cho toàn bộ hệ thống nếu có thể
+                    self.registered_agent_id = reg_response['agent_id']
+                    event_data.agent_id = reg_response['agent_id']
+                    payload['agent_id'] = reg_response['agent_id']
+                    # Gửi lại event với agent_id mới
+                    response = await self._make_request_with_retry('POST', url, payload)
+                    self.logger.info("✅ Event resent after re-registration.")
+                    self.logger.info(f"[DEBUG] Server response after re-registration: {str(response)[:500]}")
+                else:
+                    self.logger.error("❌ Auto re-registration failed.")
+                    return False, None, "Auto re-registration failed"
+            if response and response.get('success'):
+                return True, response, None
+            else:
+                self.logger.error(f"[DEBUG] Event submission failed, response: {str(response)[:500]}")
+                return False, response, response.get('error', 'Unknown error')
+        except Exception as e:
+            self.logger.error(f"❌ Exception in submit_event: {e}")
+            return False, None, str(e)
+    
+    async def send_heartbeat(self, heartbeat_data: AgentHeartbeatData) -> Optional[Dict]:
+        """Send Linux agent heartbeat to server with enhanced error handling"""
+        try:
+            if self.offline_mode:
+                return {
+                    'success': True, 
+                    'message': 'Linux offline mode heartbeat',
+                    'offline_mode': True,
+                    'platform': 'linux'
+                }
+            
+            url = f"{self.base_url}/api/v1/agents/heartbeat"
+            
+            # FIXED: Create heartbeat payload with agent identification
+            payload = {
+                'hostname': heartbeat_data.hostname or 'unknown-linux-host',
+                'status': heartbeat_data.status,
+                'cpu_usage': heartbeat_data.cpu_usage,
+                'memory_usage': heartbeat_data.memory_usage,
+                'disk_usage': heartbeat_data.disk_usage,
+                'network_latency': heartbeat_data.network_latency,
+                'platform': 'linux',
+                'uptime': heartbeat_data.uptime,
+                'load_average': heartbeat_data.load_average,
+                'memory_details': heartbeat_data.memory_details,
+                'disk_details': heartbeat_data.disk_details,
+                'network_details': heartbeat_data.network_details,
+                'active_processes': heartbeat_data.active_processes,
+                'collector_status': heartbeat_data.collector_status,
+                'events_collected': heartbeat_data.events_collected,
+                'events_sent': heartbeat_data.events_sent,
+                'events_failed': heartbeat_data.events_failed,
+                'alerts_received': heartbeat_data.alerts_received,
+                'security_status': heartbeat_data.security_status,
+                'threat_level': heartbeat_data.threat_level,
+                'agent_process_id': heartbeat_data.agent_process_id,
+                'timestamp': heartbeat_data.timestamp,
+                'metadata': heartbeat_data.metadata,
+                
+                # FIXED: Include agent identification
+                'agent_id': heartbeat_data.agent_id or self.registered_agent_id,
+                'heartbeat_sequence': int(time.time())  # Sequence number for tracking
+            }
+            
+            # Add optional fields if present
+            if hasattr(heartbeat_data, 'ip_address') and heartbeat_data.ip_address:
+                payload['ip_address'] = heartbeat_data.ip_address
+            if hasattr(heartbeat_data, 'operating_system') and heartbeat_data.operating_system:
+                payload['operating_system'] = heartbeat_data.operating_system
+            
             response = await self._make_request_with_retry('POST', url, payload)
             
             if response:
-                # Update last successful connection time
-                self.last_successful_connection = time.time()
+                # Check for agent registration issues in heartbeat response
+                if response.get('error') and 'agent not found' in response.get('error', '').lower():
+                    self.logger.warning("⚠️ Server reports agent not found - may need re-registration")
+                    self.registered_agent_id = None  # Clear cached agent_id
                 
-                # Process server response for threat detection
-                processed_response = self._process_server_response(response, event_data)
-                return True, processed_response, None
+                return response
             else:
-                self.logger.debug("📡 No response from server - marking as disconnected")
-                return False, None, "No response from server"
-                
-        except Exception as e:
-            return False, None, str(e)
-    
-    def _convert_event_to_database_payload(self, event_data: EventData) -> Optional[Dict]:
-        """
-        FIXED: Convert event data to database-compatible API payload
-        Maps EventData fields to database schema exactly
-        """
-        try:
-            # Validate agent_id is present
-            if not event_data.agent_id:
-                self.logger.error(f"❌ CRITICAL: Linux event missing agent_id - Type: {event_data.event_type}, Action: {event_data.event_action}")
-                return None
-            
-            # FIXED: Create payload matching database schema exactly (snake_case)
-            payload = {
-                # REQUIRED FIELDS (matching Events table)
-                'agent_id': event_data.agent_id,
-                'event_type': event_data.event_type,  # Process, File, Network, Registry, Authentication, System
-                'event_action': event_data.event_action,  # String value, not enum
-                'event_timestamp': event_data.event_timestamp.isoformat(),
-                'severity': event_data.severity,  # Info, Low, Medium, High, Critical
-                
-                # Process fields (optional)
-                'process_id': event_data.process_id,
-                'process_name': event_data.process_name,
-                'process_path': event_data.process_path,
-                'command_line': event_data.command_line,
-                'parent_pid': event_data.parent_pid,
-                'parent_process_name': event_data.parent_process_name,
-                'process_user': event_data.process_user,
-                'process_hash': event_data.process_hash,
-                
-                # File fields (optional)
-                'file_path': event_data.file_path,
-                'file_name': event_data.file_name,
-                'file_size': event_data.file_size,
-                'file_hash': event_data.file_hash,
-                'file_extension': event_data.file_extension,
-                'file_operation': event_data.file_operation,
-                
-                # Network fields (optional)
-                'source_ip': event_data.source_ip,
-                'destination_ip': event_data.destination_ip,
-                'source_port': event_data.source_port,
-                'destination_port': event_data.destination_port,
-                'protocol': event_data.protocol,
-                'connection_status': event_data.connection_status,
-                
-                # Registry fields (optional)
-                'registry_key': event_data.registry_key,
-                'registry_value': event_data.registry_value,
-                'registry_operation': event_data.registry_operation,
-                
-                # Authentication fields (optional)
-                'user_name': event_data.user_name,
-                'login_status': event_data.login_status,
-                'authentication_method': event_data.authentication_method,
-                'source_ip': event_data.source_ip,
-                
-                # System fields (optional)
-                'system_event': event_data.system_event,
-                'system_message': event_data.system_message,
-                
-                # Threat detection fields
-                'threat_level': event_data.threat_level,  # None, Suspicious, Malicious
-                'risk_score': event_data.risk_score,  # 0-100
-                'analyzed': event_data.analyzed,  # Boolean
-                
-                # Raw event data (JSON string)
-                'raw_event_data': event_data.raw_event_data
-            }
-            
-            # Clean payload - remove None values
-            cleaned_payload = {k: v for k, v in payload.items() if v is not None}
-            
-            # Validate required fields
-            required_fields = ['agent_id', 'event_type', 'event_action', 'event_timestamp']
-            
-            for field in required_fields:
-                if field not in cleaned_payload:
-                    self.logger.error(f"❌ Missing required field in payload: {field}")
-                    return None
-            
-            self.logger.debug(f"📦 LINUX DATABASE PAYLOAD CREATED:")
-            self.logger.debug(f"   🎯 Type: {cleaned_payload.get('event_type')}")
-            self.logger.debug(f"   🔧 Action: {cleaned_payload.get('event_action')}")
-            self.logger.debug(f"   📊 Severity: {cleaned_payload.get('severity')}")
-            self.logger.debug(f"   🆔 Agent ID: {cleaned_payload.get('agent_id')}")
-            
-            return cleaned_payload
+                return {
+                    'success': True, 
+                    'message': 'Linux heartbeat sent (no response)',
+                    'offline_mode': self.offline_mode,
+                    'platform': 'linux'
+                }
             
         except Exception as e:
-            self.logger.error(f"❌ Linux event payload conversion failed: {e}")
-            return None
-    
-    def _process_server_response(self, server_response: Dict[str, Any], original_event: EventData) -> Dict[str, Any]:
-        """Process server response for threat detection - Linux specific"""
-        try:
-            if not server_response:
-                return {'success': False, 'threat_detected': False, 'risk_score': 0}
-            
-            # Initialize processed response
-            processed_response = server_response.copy()
-            
-            # Ensure required fields
-            if 'threat_detected' not in processed_response:
-                processed_response['threat_detected'] = False
-            if 'risk_score' not in processed_response:
-                processed_response['risk_score'] = 0
-            
-            # CASE 1: Server detected threat
-            if server_response.get('threat_detected', False):
-                self.threats_detected_by_server += 1
-                self.last_threat_detection = datetime.now()
-                
-                self.logger.warning(f"🚨 LINUX SERVER DETECTED THREAT: {original_event.event_type} - Risk: {server_response.get('risk_score', 0)}")
-                
-                # Ensure complete threat information
-                if 'rule_triggered' not in processed_response:
-                    processed_response['rule_triggered'] = 'Linux Server Threat Detection'
-                if 'threat_description' not in processed_response:
-                    processed_response['threat_description'] = f'Suspicious Linux {original_event.event_type} activity detected'
-                
-                return processed_response
-            
-            # CASE 2: Server generated alerts
-            if 'alerts_generated' in server_response and server_response['alerts_generated']:
-                alerts = server_response['alerts_generated']
-                self.alerts_received_from_server += len(alerts)
-                self.last_threat_detection = datetime.now()
-                
-                self.logger.warning(f"🚨 LINUX SERVER GENERATED {len(alerts)} ALERTS for {original_event.event_type}")
-                
-                processed_response['threat_detected'] = True
-                if not processed_response.get('risk_score'):
-                    max_risk = max((alert.get('risk_score', 50) for alert in alerts), default=50)
-                    processed_response['risk_score'] = max_risk
-                
-                return processed_response
-            
-            # CASE 3: High risk score
-            risk_score = server_response.get('risk_score', 0)
-            if risk_score >= 70:
-                self.threats_detected_by_server += 1
-                self.last_threat_detection = datetime.now()
-                
-                self.logger.warning(f"🚨 LINUX HIGH RISK SCORE: {risk_score} for {original_event.event_type}")
-                
-                processed_response['threat_detected'] = True
-                processed_response['rule_triggered'] = 'Linux High Risk Score Detection'
-                processed_response['threat_description'] = f'High risk Linux {original_event.event_type} activity (Score: {risk_score})'
-                
-                return processed_response
-            
-            # CASE 4: Normal processing
-            self.logger.debug(f"✅ Linux server processed {original_event.event_type} normally - no threats detected")
-            processed_response['threat_detected'] = False
-            
-            return processed_response
-            
-        except Exception as e:
-            self.logger.error(f"❌ Linux server response processing error: {e}")
+            self.logger.debug(f"Heartbeat error: {e}")
             return {
                 'success': True,
-                'threat_detected': False,
-                'risk_score': 0,
-                'error': str(e)
+                'message': 'Linux offline mode heartbeat (error)',
+                'offline_mode': True,
+                'platform': 'linux'
             }
     
     async def _make_request_with_retry(self, method: str, url: str, payload: Optional[Dict] = None) -> Optional[Dict]:
-        """Make HTTP request with retry logic - Linux optimized"""
+        """Make HTTP request with retry logic and better error handling"""
         if self.offline_mode and '/health' not in url and '/status' not in url:
             return None
         
@@ -516,8 +412,13 @@ class LinuxServerCommunication:
             except Exception as e:
                 self.failed_connections += 1
                 
-                if "Cannot connect to host" in str(e) or "Connection refused" in str(e):
+                error_str = str(e).lower()
+                if "cannot connect to host" in error_str or "connection refused" in error_str:
                     self._mark_as_offline("Linux server connection refused")
+                    break
+                elif "agent not found" in error_str:
+                    self.logger.warning("⚠️ Server reports agent not found - clearing cached agent_id")
+                    self.registered_agent_id = None
                     break
                 
                 if attempt < max_retries:
@@ -530,7 +431,7 @@ class LinuxServerCommunication:
     
     async def _make_request_internal(self, method: str, url: str, payload: Optional[Dict] = None, 
                                    timeout_override: Optional[float] = None) -> Optional[Dict]:
-        """Internal method to make HTTP request"""
+        """Internal method to make HTTP request with enhanced error handling"""
         if (self.offline_mode and '/health' not in url and '/status' not in url) or not self.session or self._session_closed:
             return None
         
@@ -567,7 +468,7 @@ class LinuxServerCommunication:
             raise Exception(f"Linux request error: {e}")
     
     async def _handle_response(self, response: aiohttp.ClientResponse) -> Optional[Dict]:
-        """Handle HTTP response"""
+        """Handle HTTP response with enhanced error handling"""
         try:
             self.logger.debug(f"📥 LINUX RESPONSE: Status={response.status}, Content-Type={response.headers.get('content-type', 'unknown')}")
             
@@ -582,6 +483,23 @@ class LinuxServerCommunication:
                     if len(text) < 200:
                         return {'success': True, 'message': text}
                     return None
+                    
+            elif response.status == 400:
+                try:
+                    error_data = await response.json()
+                    error_msg = error_data.get('error', 'Unknown error')
+                    self.logger.warning(f"⚠️ LINUX CLIENT ERROR (400): {error_msg}")
+                    
+                    # FIXED: Handle "agent not found" specifically
+                    if 'agent not found' in error_msg.lower():
+                        self.logger.warning("🔄 Agent not found on server - may need re-registration")
+                        self.registered_agent_id = None
+                    
+                    return error_data  # Return error data for handling
+                except json.JSONDecodeError:
+                    text = await response.text()
+                    self.logger.warning(f"⚠️ LINUX CLIENT ERROR (400): {text}")
+                    return {'error': text}
                     
             elif response.status == 422:
                 try:
@@ -609,189 +527,75 @@ class LinuxServerCommunication:
             self.logger.error(f"❌ Linux response handling error: {e}")
             return None
     
-    async def register_agent(self, registration_data: AgentRegistrationData) -> Optional[Dict]:
-        """Register Linux agent with EDR server - FIXED for database"""
-        try:
-            if not self.working_server:
-                self.logger.warning("⚠️ No server available for Linux agent registration")
-                return None
-            
-            url = f"{self.base_url}/api/v1/agents/register"
-            
-            # FIXED: Create registration payload matching API expectations (snake_case)
-            registration_payload = {
-                # REQUIRED fields
-                'hostname': registration_data.hostname,
-                'ip_address': registration_data.ip_address,
-                'operating_system': registration_data.operating_system,
-                'os_version': registration_data.os_version or platform.release(),
-                'architecture': registration_data.architecture or platform.machine(),
-                'agent_version': '2.1.0-Linux',
-                
-                # OPTIONAL fields
-                'mac_address': registration_data.mac_address,
-                'domain': registration_data.domain,
-                'install_path': registration_data.install_path,
-                
-                # Default values for required fields
-                'status': 'Active',
-                'cpu_usage': 0.0,
-                'memory_usage': 0.0,
-                'disk_usage': 0.0,
-                'network_latency': 0,
-                'monitoring_enabled': True,
-                
-                # Linux-specific metadata
-                'platform': 'linux',
-                'kernel_version': registration_data.kernel_version,
-                'distribution': registration_data.distribution,
-                'distribution_version': registration_data.distribution_version,
-                'has_root_privileges': registration_data.has_root_privileges,
-                'current_user': registration_data.current_user,
-                'effective_user': registration_data.effective_user,
-                'user_groups': registration_data.user_groups,
-                'capabilities': registration_data.capabilities
-            }
-            
-            # Ensure 'hostname' is never None
-            if 'hostname' in registration_payload and not registration_payload['hostname']:
-                registration_payload['hostname'] = 'unknown'
-            
-            response = await self._make_request_with_retry('POST', url, registration_payload)
-            
-            if response and response.get('agent_id'):
-                self.logger.info(f"✅ Linux agent registered successfully: {response['agent_id']}")
-                return response
-            else:
-                self.logger.error(f"❌ Linux agent registration failed: {response}")
-                return None
-                
-        except Exception as e:
-            self.logger.error(f"❌ Linux agent registration error: {e}")
-            return None
+    def _setup_offline_mode(self):
+        """Setup offline mode with Linux-specific settings"""
+        self.logger.info("🔄 Setting up Linux offline mode...")
+        self.offline_events_queue = []
     
-    async def send_heartbeat(self, heartbeat_data: AgentHeartbeatData) -> Optional[Dict]:
-        """Send Linux agent heartbeat to server - FIXED for database"""
-        try:
-            if self.offline_mode:
-                return {
-                    'success': True, 
-                    'message': 'Linux offline mode heartbeat',
-                    'offline_mode': True,
-                    'platform': 'linux'
-                }
-            
-            url = f"{self.base_url}/api/v1/agents/heartbeat"
-            
-            # FIXED: Create heartbeat payload matching API expectations (snake_case)
-            payload = {
-                'hostname': heartbeat_data.hostname,
-                'status': heartbeat_data.status,
-                'cpu_usage': heartbeat_data.cpu_usage,
-                'memory_usage': heartbeat_data.memory_usage,
-                'disk_usage': heartbeat_data.disk_usage,
-                'network_latency': heartbeat_data.network_latency,
-                'platform': 'linux',
-                'uptime': heartbeat_data.uptime,
-                'load_average': heartbeat_data.load_average,
-                'memory_details': heartbeat_data.memory_details,
-                'disk_details': heartbeat_data.disk_details,
-                'network_details': heartbeat_data.network_details,
-                'active_processes': heartbeat_data.active_processes,
-                'collector_status': heartbeat_data.collector_status,
-                'events_collected': heartbeat_data.events_collected,
-                'events_sent': heartbeat_data.events_sent,
-                'events_failed': heartbeat_data.events_failed,
-                'alerts_received': heartbeat_data.alerts_received,
-                'security_status': heartbeat_data.security_status,
-                'threat_level': heartbeat_data.threat_level,
-                'agent_process_id': heartbeat_data.agent_process_id,
-                'timestamp': heartbeat_data.timestamp,
-                'metadata': heartbeat_data.metadata
-            }
-            # Add optional fields if present
-            if hasattr(heartbeat_data, 'ip_address') and heartbeat_data.ip_address:
-                payload['ip_address'] = heartbeat_data.ip_address
-            if hasattr(heartbeat_data, 'operating_system') and heartbeat_data.operating_system:
-                payload['operating_system'] = heartbeat_data.operating_system
-            
-            # Ensure 'hostname' is never None
-            if 'hostname' in payload and not payload['hostname']:
-                payload['hostname'] = 'unknown'
-            
-            response = await self._make_request_with_retry('POST', url, payload)
-            return response or {
-                'success': True, 
-                'message': 'Linux heartbeat sent (no response)',
-                'offline_mode': self.offline_mode,
-                'platform': 'linux'
-            }
-            
-        except Exception as e:
-            return {
-                'success': True, 
-                'message': 'Linux offline mode heartbeat (error)',
-                'offline_mode': True,
-                'platform': 'linux'
-            }
+    def _mark_as_offline(self, reason: str = "Connection error"):
+        """Immediately mark communication as offline"""
+        if not self.offline_mode:
+            self.logger.info(f"📡 Linux {reason} - entering offline mode")
+            self.offline_mode = True
     
-    async def close(self):
-        """Close communication session"""
-        try:
-            if self.session and not self.session.closed:
-                await self.session.close()
-                self._session_closed = True
-        except Exception as e:
-            self.logger.error(f"Error closing Linux session: {e}")
+    async def _detect_working_server(self):
+        """Auto-detect working EDR server - Linux optimized"""
+        # Chỉ thử đúng IP backend bạn muốn
+        potential_servers = [
+            {'host': '192.168.20.85', 'port': 5000, 'name': 'Configured Server'},
+        ]
+        for server in potential_servers:
+            if await self._test_server_connection(server):
+                self.logger.info(f"✅ Found working server: {server['name']} ({server['host']}:{server['port']})")
+                return server
+        return None
     
-    def get_server_info(self) -> Dict[str, Any]:
-        """Get Linux server connection information"""
-        return {
-            'working_server': self.working_server,
-            'host': self.server_host,
-            'port': self.server_port,
-            'base_url': self.base_url,
-            'offline_mode': self.offline_mode,
-            'timeout': self.timeout,
-            'connection_attempts': self.connection_attempts,
-            'successful_connections': self.successful_connections,
-            'failed_connections': self.failed_connections,
-            'last_successful_connection': self.last_successful_connection,
-            'session_active': self.session is not None and not self._session_closed,
-            'success_rate': (self.successful_connections / max(self.connection_attempts, 1)) * 100 if self.connection_attempts > 0 else 0,
-            'offline_events_queued': len(self.offline_events_queue),
-            'max_offline_events': self.max_offline_events,
-            'threats_detected_by_server': self.threats_detected_by_server,
-            'alerts_received_from_server': self.alerts_received_from_server,
-            'last_threat_detection': self.last_threat_detection.isoformat() if self.last_threat_detection else None,
-            'platform': 'linux',
-            'database_compatible': True,
-            'fixed_payload_format': True
-        }
-    
-    def is_connected(self) -> bool:
-        """Check if Linux server is connected and responding"""
+    async def _test_server_connection(self, server):
+        """Test connection to a specific server"""
         try:
-            if not self.working_server or self.offline_mode:
-                return False
+            host = server['host']
+            port = server['port']
             
-            if not self.session or self._session_closed:
-                self.offline_mode = True
-                return False
-            
-            if self.last_successful_connection:
-                time_since_last_success = time.time() - self.last_successful_connection
-                if time_since_last_success < 20:  # 20 seconds for Linux
-                    return True
-                else:
-                    self.offline_mode = True
+            # Test TCP connection
+            def test_tcp():
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(2)
+                    result = sock.connect_ex((host, port))
+                    sock.close()
+                    return result == 0
+                except:
                     return False
             
-            self.offline_mode = True
+            tcp_success = await asyncio.to_thread(test_tcp)
+            return tcp_success
+            
+        except Exception as e:
+            return False
+    
+    async def _test_connection(self):
+        """Test connection to selected server"""
+        try:
+            if not self.working_server:
+                return False
+            
+            test_endpoints = ['/health', '/api/v1/status', '/', '/status']
+            
+            for endpoint in test_endpoints:
+                try:
+                    url = f"{self.base_url}{endpoint}"
+                    response = await self._make_request_internal('GET', url, timeout_override=5)
+                    
+                    if response is not None:
+                        self.last_successful_connection = time.time()
+                        self.successful_connections += 1
+                    return True
+                except:
+                    continue
+            
             return False
             
-        except Exception:
-            self.offline_mode = True
+        except Exception as e:
             return False
     
     async def test_connection(self) -> bool:
@@ -816,102 +620,73 @@ class LinuxServerCommunication:
             self.logger.debug(f"📡 Linux HTTP connection test error: {e}")
             return False
     
-    async def force_reconnection(self) -> bool:
-        """Force reconnection attempt for Linux"""
+    def _process_server_response(self, server_response: Dict[str, Any], original_event: EventData) -> Dict[str, Any]:
+        """Process server response for threat detection"""
         try:
-            self.logger.debug("🔄 Linux force reconnection attempt...")
+            if not server_response:
+                return {'success': False, 'threat_detected': False, 'risk_score': 0}
             
-            self.last_successful_connection = None
+            # Initialize processed response
+            processed_response = server_response.copy()
             
-            working_server = await self._detect_working_server()
-            if working_server:
-                self.working_server = working_server
-                self.server_host = working_server['host']
-                self.server_port = working_server['port']
-                self.base_url = f"http://{self.server_host}:{self.server_port}"
+            # Ensure required fields
+            if 'threat_detected' not in processed_response:
+                processed_response['threat_detected'] = False
+            if 'risk_score' not in processed_response:
+                processed_response['risk_score'] = 0
+            
+            return processed_response
                 
-                self.logger.debug(f"📡 Linux server detected: {self.base_url}")
-                
-                await self.close()
-                
-                timeout = aiohttp.ClientTimeout(
-                    total=15,
-                    connect=5,
-                    sock_read=8,
-                    sock_connect=5
-                )
-                
-                headers = {
-                    'Content-Type': 'application/json',
-                    'X-Agent-Token': self.auth_token,
-                    'User-Agent': 'EDR-Agent/2.1.0-Linux',
-                    'X-Platform': 'Linux',
-                    'Connection': 'keep-alive',
-                    'Accept': 'application/json'
-                }
-                
-                connector = aiohttp.TCPConnector(
-                    limit=self.connection_pool_size,
-                    limit_per_host=self.connection_pool_size,
-                    ttl_dns_cache=300,
-                    use_dns_cache=True,
-                    keepalive_timeout=self.keep_alive_timeout,
-                    enable_cleanup_closed=True,
-                    force_close=False,
-                    ssl=False
-                )
-                
-                self.session = aiohttp.ClientSession(
-                    timeout=timeout,
-                    headers=headers,
-                    connector=connector,
-                    raise_for_status=False
-                )
-                self._session_closed = False
-                
-                self.logger.debug("📡 Linux session reinitialized, testing connection...")
-                
-                if await self.test_connection():
-                    self.offline_mode = False
-                    self.logger.info("✅ Linux force reconnection successful")
-                    return True
+        except Exception as e:
+            self.logger.error(f"❌ Linux server response processing error: {e}")
+            return {
+                'success': True,
+                'threat_detected': False,
+                'risk_score': 0,
+                'error': str(e)
+            }
+    
+    async def close(self):
+        """Close communication session"""
+        try:
+            if self.session and not self.session.closed:
+                await self.session.close()
+                self._session_closed = True
+        except Exception as e:
+            self.logger.error(f"Error closing Linux session: {e}")
+    
+    async def _periodic_server_detection(self):
+        """Periodically check for server availability"""
+        last_reconnection_attempt = 0
+        reconnection_interval = 3  # Try every 3 seconds when offline
+        while True:
+            try:
+                current_time = time.time()
+                # If offline, continuously try to reconnect
+                if self.offline_mode:
+                    if current_time - last_reconnection_attempt >= reconnection_interval:
+                        self.logger.debug("🔄 Attempting to reconnect to server...")
+                        last_reconnection_attempt = current_time
+                        if await self.test_connection():
+                            self.logger.info("✅ Successfully reconnected to server!")
+                            self.offline_mode = False
+                            # Optionally, send queued events here
+                        else:
+                            self.logger.debug("🔄 Reconnection failed - will try again")
+                    await asyncio.sleep(1)
                 else:
-                    self.logger.debug("📡 Linux force reconnection failed - HTTP test failed")
-                    return False
-            else:
-                self.logger.debug("📡 Linux force reconnection failed - no server detected")
-                return False
-                
-        except Exception as e:
-            self.logger.debug(f"Linux force reconnection error: {e}")
-            return False
+                    # If online, check connection every 15 seconds
+                    await asyncio.sleep(15)
+                    if not await self.test_connection():
+                        self.logger.warning("⚠️ Lost connection to server - entering offline mode")
+                        self.offline_mode = True
+            except Exception as e:
+                self.logger.debug(f"Periodic server detection error: {e}")
+                await asyncio.sleep(3)
     
-    def _mark_as_offline(self, reason: str = "Connection error"):
-        """Immediately mark communication as offline"""
-        if not self.offline_mode:
-            self.logger.info(f"📡 Linux {reason} - entering offline mode")
-            self.offline_mode = True
-    
-    async def _detect_connection_loss(self):
-        """Detect if Linux connection is lost"""
-        try:
-            if self.offline_mode:
-                return
-            
-            if self.last_successful_connection:
-                time_since_last_success = time.time() - self.last_successful_connection
-                if time_since_last_success > 20:  # 20 seconds for Linux
-                    self.logger.info("📡 Linux connection lost - entering offline mode")
-                    self.offline_mode = True
-                    return
-            
-            if not self.last_successful_connection and not self.offline_mode:
-                self.logger.info("📡 No recent Linux connection - entering offline mode")
-                self.offline_mode = True
-                
-        except Exception as e:
-            self.logger.debug(f"Linux connection loss detection error: {e}")
-            self.offline_mode = True
+    def is_connected(self) -> bool:
+        """Return True if communication is online and a working server is set"""
+        return not self.offline_mode and self.working_server is not None
 
-# Alias for compatibility
+# Alias for compatibility with existing code
 ServerCommunication = LinuxServerCommunication

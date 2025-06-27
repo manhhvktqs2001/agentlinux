@@ -279,10 +279,10 @@ class LinuxBaseCollector(ABC):
                 self.logger.error(f"❌ CRITICAL: Event missing agent_id - Type: {event_data.event_type}, Action: {event_data.event_action}")
                 self.collection_errors += 1
                 return
-            # Safely update raw_event_data
+            # Safely update raw_event_data - FIXED: Always keep as dict
             if hasattr(event_data, 'raw_event_data'):
-                import json
                 if isinstance(event_data.raw_event_data, str):
+                    import json
                     try:
                         raw_data = json.loads(event_data.raw_event_data)
                     except:
@@ -296,13 +296,12 @@ class LinuxBaseCollector(ABC):
                     'collector': self.collector_name,
                     'collection_time': time.time(),
                     'has_root_privileges': self.has_required_privileges,
-                    'agent_id_set_by': 'collector'
+                    'agent_id_set_by': 'collector',
+                    'processor_version': 'enhanced_v2.1',
+                    'database_compatible': True
                 })
-                # Only serialize if original was a string
-                if isinstance(event_data.raw_event_data, str):
-                    event_data.raw_event_data = json.dumps(raw_data, default=str)
-                else:
-                    event_data.raw_event_data = raw_data
+                # FIXED: Always keep as dict, never convert to string
+                event_data.raw_event_data = raw_data
             event_type = getattr(event_data, 'event_type', 'Unknown')
             event_action = getattr(event_data, 'event_action', 'Unknown')
             process_name = getattr(event_data, 'process_name', 'Unknown')

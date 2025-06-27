@@ -108,12 +108,7 @@ class EventData:
     destination_port: Optional[int] = None  # Maps to DestinationPort
     protocol: Optional[str] = None  # Maps to Protocol
     direction: Optional[str] = None  # Maps to Direction
-    
-    # Registry information (kept for compatibility)
-    registry_key: Optional[str] = None  # Maps to RegistryKey
-    registry_value_name: Optional[str] = None  # Maps to RegistryValueName
-    registry_value_data: Optional[str] = None  # Maps to RegistryValueData
-    registry_operation: Optional[str] = None  # Maps to RegistryOperation
+    connection_status: Optional[str] = None  # Maps to ConnectionStatus
     
     # Authentication information (Maps to database auth fields)
     login_user: Optional[str] = None  # Maps to LoginUser
@@ -127,7 +122,7 @@ class EventData:
     analyzed_at: Optional[datetime] = None  # Maps to AnalyzedAt
     
     # Raw event data (Maps to RawEventData)
-    raw_event_data: Optional[str] = None  # Maps to RawEventData (NVARCHAR(MAX))
+    raw_event_data: Optional[dict] = None  # Maps to RawEventData (dict)
     
     # Additional Linux-specific fields (stored in raw_event_data)
     hostname: Optional[str] = None
@@ -174,8 +169,12 @@ class EventData:
         if not self.description:
             self.description = self._generate_description()
         
-        # Prepare raw_event_data as JSON string
-        self._prepare_raw_event_data()
+        # FIXED: Only prepare raw_event_data if it's not already set by collector
+        if self.raw_event_data is None:
+            self._prepare_raw_event_data()
+        elif isinstance(self.raw_event_data, str):
+            # If it's a string, convert to dict
+            self._prepare_raw_event_data()
     
     def _generate_description(self) -> str:
         """Generate event description"""
@@ -198,13 +197,13 @@ class EventData:
             return f"Linux Event: {self.event_type} - {self.event_action}"
     
     def _prepare_raw_event_data(self):
-        """Prepare raw_event_data as JSON string for database storage - FIXED"""
+        """Prepare raw_event_data as dict for database storage - FIXED"""
         try:
-            import json
             # If raw_event_data is already a dict, use it
             if isinstance(self.raw_event_data, dict):
                 raw_data = self.raw_event_data.copy()
             elif isinstance(self.raw_event_data, str):
+                import json
                 try:
                     raw_data = json.loads(self.raw_event_data)
                 except:
@@ -232,9 +231,9 @@ class EventData:
                 value = getattr(self, field, None)
                 if value is not None:
                     raw_data[field] = value
-            self.raw_event_data = json.dumps(raw_data, default=str)
+            self.raw_event_data = raw_data  # Lưu là dict, không phải string
         except Exception as e:
-            self.raw_event_data = f'{{"platform": "linux", "error": "{str(e)}"}}'
+            self.raw_event_data = {'platform': 'linux', 'error': str(e)}
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API submission"""
@@ -271,14 +270,12 @@ class EventData:
                 'source_port': self.source_port,
                 'destination_port': self.destination_port,
                 'protocol': self.protocol,
+                'direction': self.direction,
                 'connection_status': self.connection_status,
-                # Authentication fields (optional)
-                'user_name': self.user_name,
-                'login_status': self.login_status,
-                'authentication_method': self.authentication_method,
-                # System fields (optional)
-                'system_event': self.system_event,
-                'system_message': self.system_message,
+                # Authentication fields (Linux dùng login_user, login_type, login_result)
+                'login_user': self.login_user,
+                'login_type': self.login_type,
+                'login_result': self.login_result,
                 # Threat detection fields
                 'threat_level': self.threat_level,
                 'risk_score': self.risk_score,
@@ -307,7 +304,7 @@ class EventData:
                 event_type="System",
                 event_action="Access",
                 description=f"Error creating event from dict: {e}",
-                raw_event_data=f'{{"error": "{str(e)}", "original_data": {str(data)}}}'
+                raw_event_data={'platform': 'linux', 'error': str(e)}
             )
     
     def set_threat_indicators(self, threat_score: int, threat_description: str = None):
