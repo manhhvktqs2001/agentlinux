@@ -1,85 +1,263 @@
-# ✅ COMPLETELY FIXED: Linux EDR Agent Configuration
-# All validation issues resolved - 100% server compatible
+# ✅ OPTIMIZED: Linux EDR Agent Configuration
+# Enhanced for stability, performance, and reduced event spam
 
 agent:
   # Agent identification
   agent_id: null  # Will be auto-generated
-  agent_name: "Linux EDR Agent"
-  agent_version: "2.1.0"
+  agent_name: "Linux EDR Agent - Optimized"
+  agent_version: "2.1.0-Optimized"
   
-  # Event processing - FIXED FOR SPAM REDUCTION
-  event_batch_size: 10  # Reduced to prevent overwhelming server
-  event_queue_size: 500  # Reduced queue size
-  individual_threshold: 3  # Use individual submission for small batches
-  disable_batch_submission: true  # Force individual submission for stability
-  test_event_submission: false  # Disable test events
-  
-  # Processing workers - OPTIMIZED
-  num_workers: 1  # Reduced to prevent resource issues
-  num_batch_processors: 1
-  
-  # Collection intervals - SIGNIFICANTLY INCREASED TO REDUCE SPAM
-  process_collection_interval: 30  # 30 seconds instead of 10
-  file_collection_interval: 300   # 5 minutes - heavy spam reducer
-  network_collection_interval: 60 # 1 minute
-  system_collection_interval: 120 # 2 minutes
-  authentication_collection_interval: 180 # 3 minutes
-  
-  # Heartbeat and monitoring
-  heartbeat_interval: 60  # Increased to 1 minute
-  system_monitor_interval: 120  # 2 minutes
-  memory_threshold: 80
-  cpu_threshold: 90
-  debug_mode: false
-
-  # ✅ FIXED: Collector enable/disable - STRATEGIC DISABLING
-  enable_process_collector: true    # Keep essential process monitoring
-  enable_file_collector: false     # DISABLED - major spam source
-  enable_network_collector: true   # Keep network monitoring
-  enable_system_collector: true    # Keep system monitoring
-  enable_authentication_collector: true  # Keep security monitoring
-
+  # ✅ OPTIMIZATION: Server communication settings
 server:
   host: '192.168.20.85'
   port: 5000
   auth_token: 'edr_agent_auth_2024'
-  timeout: 30
-  max_retries: 3
-  retry_delay: 5
+  timeout: 45                    # Increased timeout
+  max_retries: 5                 # Increased retries
+  retry_delay: 10                # Increased retry delay
+  connection_pool_size: 5        # Connection pooling
+  keep_alive: true               # Keep connections alive
 
+# ✅ OPTIMIZATION: Reduced collection scope
 collection:
   enabled: true
-  # ✅ FIXED: Collection settings - SPAM REDUCTION
+  
+  # ✅ STRATEGIC: Disable high-volume collectors
   collect_processes: true
-  collect_files: false      # DISABLED - major spam source
+  collect_files: false           # DISABLED - major spam source
   collect_network: true
   collect_authentication: true
   collect_system_events: true
-  polling_interval: 30      # Increased from 3 to 30 seconds
+  
+  # ✅ OPTIMIZATION: Increased polling intervals
+  polling_interval: 60           # Increased from 30 to 60 seconds
+  max_events_per_collection: 5   # Limit events per collection cycle
+  
+  # ✅ NEW: Smart filtering
+  enable_event_filtering: true
+  enable_deduplication: true
+  deduplication_window: 300      # 5 minutes
 
-# ✅ FIXED: Linux-specific settings - REDUCED MONITORING
+# ✅ OPTIMIZATION: Minimal Linux-specific monitoring
 linux_specific:
   monitor_proc_filesystem: false  # DISABLED - can cause spam
-  use_inotify: false              # DISABLED - major spam source
-  monitor_systemd: true
-  paths_to_monitor: []            # DISABLED - no file monitoring
+  use_inotify: false             # DISABLED - major spam source
+  monitor_systemd: true          # Keep essential service monitoring
+  monitor_audit_daemon: false    # DISABLED - can be noisy
+  
+  # ✅ OPTIMIZATION: Minimal path monitoring
+  paths_to_monitor: []           # Empty - no file monitoring
+  exclude_paths:
+    - '/proc'
+    - '/sys'
+    - '/dev'
+    - '/tmp'
+    - '/var/tmp'
+    - '/var/log'
+  
+  # ✅ OPTIMIZATION: Process filtering
+  exclude_kernel_threads: true
+  exclude_short_lived_processes: true
+  min_process_lifetime: 10       # Only monitor processes > 10 seconds
 
-# ✅ FIXED: Logging configuration
+# ✅ OPTIMIZATION: Conservative logging
 logging:
-  level: 'INFO'  # Reduced from DEBUG to prevent log spam
+  level: 'INFO'                  # Keep INFO level
   console_enabled: true
+  file_enabled: true
   log_directory: './logs'
+  
+  # ✅ NEW: Log rotation settings
+  max_log_size: '50MB'          # Increased log size
+  backup_count: 3               # Fewer backup files
+  log_compression: true         # Compress old logs
 
-# ✅ FIXED: Performance settings
+# ✅ OPTIMIZATION: Enhanced performance settings
 performance:
-  max_cpu_usage: 15      # Reduced CPU limit
-  max_memory_usage: 256  # Reduced memory limit
+  max_cpu_usage: 20             # Reduced CPU limit
+  max_memory_usage: 200         # Reduced memory limit (200MB)
   auto_throttle: true
+  throttle_threshold: 15        # Start throttling at 15% CPU
+  
+  # ✅ NEW: Resource monitoring
+  monitor_resource_usage: true
+  resource_check_interval: 30
+  emergency_shutdown_threshold: 95  # Emergency stop at 95% resource usage
+  
+  # ✅ NEW: Collector management
+  restart_failed_collectors: true
+  max_collector_restarts: 3
+  collector_restart_delay: 60
 
-# ✅ FIXED: Event filtering to reduce spam
+# ✅ OPTIMIZATION: Aggressive event filtering
 filters:
   exclude_system_processes: true
   exclude_kernel_threads: true
   exclude_short_lived_processes: true
-  min_process_lifetime: 5  # Only monitor processes that live > 5 seconds
-  max_events_per_minute: 20  # Hard limit on events per minute
+  exclude_agent_activity: true
+  
+  # ✅ OPTIMIZATION: Extended process exclusions
+  exclude_process_names:
+    - 'kthreadd'
+    - 'ksoftirqd'
+    - 'migration'
+    - 'rcu_'
+    - 'watchdog'
+    - 'systemd'
+    - 'dbus'
+    - 'NetworkManager'
+    - 'pulseaudio'
+    - 'gnome-'
+    - 'kde-'
+  
+  # ✅ OPTIMIZATION: Path exclusions
+  exclude_process_paths:
+    - '/lib/systemd'
+    - '/usr/lib/systemd'
+    - '/usr/bin/dbus'
+    - '/usr/sbin'
+  
+  # ✅ OPTIMIZATION: File filtering
+  exclude_file_extensions:
+    - '.tmp'
+    - '.log'
+    - '.cache'
+    - '.pid'
+    - '.lock'
+    - '.swp'
+    - '.bak'
+  
+  exclude_file_paths:
+    - '/tmp'
+    - '/var/tmp'
+    - '/var/log'
+    - '/var/cache'
+    - '/proc'
+    - '/sys'
+    - '/dev'
+  
+  # ✅ OPTIMIZATION: Size and complexity limits
+  min_process_lifetime: 10      # Increased from 5 to 10 seconds
+  max_file_size_mb: 50         # Reduced from 100 to 50MB
+  max_command_line_length: 1024 # Reduced from 2048
+  max_events_per_minute: 15     # Hard limit on events per minute
+  
+  # ✅ NEW: Smart filtering rules
+  ignore_repeated_events: true
+  repeated_event_threshold: 3   # Ignore after 3 identical events
+  repeated_event_window: 300    # Within 5 minutes
+
+# ✅ NEW: Health monitoring configuration
+health_monitoring:
+  enabled: true
+  check_interval: 60           # Check every minute
+  restart_unhealthy_components: true
+  max_restart_attempts: 3
+  
+  # Component health thresholds
+  communication_timeout: 30
+  event_processor_max_queue: 200
+  collector_max_errors: 10
+
+# ✅ NEW: Auto-optimization settings
+auto_optimization:
+  enabled: true
+  adjustment_interval: 600     # Adjust every 10 minutes
+  
+  # Dynamic adjustment thresholds
+  high_load_threshold: 80      # CPU percentage
+  low_memory_threshold: 100    # MB available
+  
+  # Auto-adjustments
+  reduce_collection_frequency: true
+  disable_non_essential_collectors: true
+  increase_batch_intervals: true
+
+# ✅ NEW: Emergency settings
+emergency:
+  enabled: true
+  cpu_emergency_threshold: 95
+  memory_emergency_threshold: 95
+  
+  # Emergency actions
+  pause_all_collectors: true
+  flush_event_queues: true
+  reduce_to_minimal_mode: true
+  
+  # Recovery settings
+  recovery_check_interval: 300  # 5 minutes
+  auto_recovery_threshold: 70   # Resume when < 70% usage
+
+# ✅ NEW: Maintenance settings
+maintenance:
+  enabled: true
+  
+  # Automatic cleanup
+  cleanup_interval: 3600       # Every hour
+  cleanup_old_logs: true
+  cleanup_old_events: true
+  max_log_age_days: 7
+  
+  # Performance optimization
+  optimize_database: true
+  compress_old_data: true
+  vacuum_interval: 86400       # Daily
+
+# ✅ NEW: Notification settings for administrators
+notifications:
+  enabled: true
+  
+  # Performance alerts
+  alert_on_high_cpu: true
+  alert_on_high_memory: true
+  alert_on_collector_failure: true
+  
+  # Alert thresholds
+  cpu_alert_threshold: 80
+  memory_alert_threshold: 85
+  
+  # Alert methods
+  log_alerts: true
+  console_alerts: true: Reduced event processing to prevent spam
+  event_batch_size: 5         # Reduced from 10 to 5
+  event_queue_size: 250       # Reduced from 500 to 250
+  individual_threshold: 2     # Reduced from 3 to 2
+  disable_batch_submission: true
+  test_event_submission: false
+  
+  # ✅ OPTIMIZATION: Minimal workers for stability
+  num_workers: 1
+  num_batch_processors: 1
+  
+  # ✅ OPTIMIZATION: Significantly increased intervals to reduce load
+  process_collection_interval: 45    # Increased from 30 to 45 seconds
+  file_collection_interval: 600      # Increased to 10 minutes
+  network_collection_interval: 90    # Increased to 1.5 minutes
+  system_collection_interval: 180    # Increased to 3 minutes
+  authentication_collection_interval: 300  # Increased to 5 minutes
+  
+  # ✅ OPTIMIZATION: Extended monitoring intervals
+  heartbeat_interval: 90             # Increased to 1.5 minutes
+  system_monitor_interval: 300       # Increased to 5 minutes
+  performance_monitor_interval: 120   # New: 2 minutes
+  health_monitor_interval: 60        # New: 1 minute
+  
+  # ✅ OPTIMIZATION: Conservative resource thresholds
+  memory_threshold: 70  # Reduced from 80
+  cpu_threshold: 80     # Reduced from 90
+  debug_mode: false
+
+  # ✅ STRATEGIC: Selective collector enabling
+  enable_process_collector: true      # Essential - keep enabled
+  enable_file_collector: false       # DISABLED - major spam source
+  enable_network_collector: true     # Important for security
+  enable_system_collector: true      # Important for monitoring
+  enable_authentication_collector: true  # Critical for security
+  
+  # ✅ NEW: Performance optimization settings
+  optimize_for_low_resources: true
+  max_events_per_minute: 15          # Hard limit
+  collector_restart_on_error: true
+  auto_pause_on_high_load: true
+
+# ✅ OPTIMIZATION
