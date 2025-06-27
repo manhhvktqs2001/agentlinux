@@ -1,7 +1,7 @@
-# agent/collectors/authentication_collector.py - Linux Authentication Collector
+# agent/collectors/authentication_collector.py - FIXED Linux Authentication Collector
 """
 Linux Authentication Collector - Monitor login events, sudo usage, and authentication logs
-Enhanced security monitoring for Linux authentication activities
+Enhanced security monitoring for Linux authentication activities - FIXED IMPORTS
 """
 
 import asyncio
@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 
 from agent.collectors.base_collector import BaseCollector
-from agent.schemas.events import EventData, EventSeverity
+from agent.schemas.events import EventData, EventSeverity  # FIXED: Import EventSeverity
 
 @dataclass
 class AuthEvent:
@@ -451,7 +451,7 @@ class LinuxAuthenticationCollector(BaseCollector):
             event_data = EventData(
                 event_type="Authentication",
                 event_action=auth_event.event_type,
-                severity=EventSeverity.INFO if auth_event.success else EventSeverity.MEDIUM,
+                severity=EventSeverity.INFO.value if auth_event.success else EventSeverity.MEDIUM.value,
                 login_user=auth_event.user,
                 login_type=auth_event.event_type,
                 login_result="Success" if auth_event.success else "Failed",
@@ -464,11 +464,12 @@ class LinuxAuthenticationCollector(BaseCollector):
                     'success': auth_event.success,
                     'timestamp': auth_event.timestamp.isoformat(),
                     'details': auth_event.details,
-                    'raw_message': auth_event.raw_message
+                    'raw_message': auth_event.raw_message,
+                    'platform': 'linux'
                 }
             )
             
-            await self._send_event(event_data)
+            await self._send_event_immediately(event_data)
             
             # Track failed attempts
             if not auth_event.success:
@@ -634,7 +635,7 @@ class LinuxAuthenticationCollector(BaseCollector):
             event_data = EventData(
                 event_type="Authentication",
                 event_action="wtmp_login",
-                severity=EventSeverity.INFO,
+                severity=EventSeverity.INFO.value,
                 login_user=login_info['user'],
                 login_type="wtmp_login",
                 login_result="Success",
@@ -644,11 +645,12 @@ class LinuxAuthenticationCollector(BaseCollector):
                     'user': login_info['user'],
                     'tty': login_info['tty'],
                     'source': login_info['source'],
-                    'login_time': login_info['login_time']
+                    'login_time': login_info['login_time'],
+                    'platform': 'linux'
                 }
             )
             
-            await self._send_event(event_data)
+            await self._send_event_immediately(event_data)
             
         except Exception as e:
             self.logger.error(f"❌ wtmp login handling failed: {e}")
@@ -707,7 +709,7 @@ class LinuxAuthenticationCollector(BaseCollector):
             event_data = EventData(
                 event_type="Authentication",
                 event_action="btmp_failed",
-                severity=EventSeverity.MEDIUM,
+                severity=EventSeverity.MEDIUM.value,
                 login_user=failed_info['user'],
                 login_type="btmp_failed",
                 login_result="Failed",
@@ -717,11 +719,12 @@ class LinuxAuthenticationCollector(BaseCollector):
                     'user': failed_info['user'],
                     'tty': failed_info['tty'],
                     'source': failed_info['source'],
-                    'attempt_time': failed_info['attempt_time']
+                    'attempt_time': failed_info['attempt_time'],
+                    'platform': 'linux'
                 }
             )
             
-            await self._send_event(event_data)
+            await self._send_event_immediately(event_data)
             
         except Exception as e:
             self.logger.error(f"❌ btmp failed login handling failed: {e}")
@@ -905,15 +908,16 @@ class LinuxAuthenticationCollector(BaseCollector):
             event_data = EventData(
                 event_type="Authentication",
                 event_action=event_type,
-                severity=severity,
+                severity=severity.value,
                 description=f"Security event: {event_type}",
                 raw_event_data={
                     'security_event_type': event_type,
-                    'details': details
+                    'details': details,
+                    'platform': 'linux'
                 }
             )
             
-            await self._send_event(event_data)
+            await self._send_event_immediately(event_data)
             
         except Exception as e:
             self.logger.error(f"❌ Security event reporting failed: {e}")
@@ -928,5 +932,6 @@ class LinuxAuthenticationCollector(BaseCollector):
             'failed_attempts': len([u for u, d in self.failed_attempts.items() if d['count'] > 0]),
             'security_events': len(self.security_events),
             'brute_force_attempts': len(self.brute_force_attempts),
-            'suspicious_logins': len(self.suspicious_logins)
+            'suspicious_logins': len(self.suspicious_logins),
+            'platform': 'linux'
         }

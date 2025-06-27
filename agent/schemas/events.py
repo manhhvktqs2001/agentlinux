@@ -1,7 +1,7 @@
 # agent/schemas/events.py - FIXED Linux Event Schemas
 """
-Linux Event Data Schemas - FIXED VERSION WITH CORRECT EXPORTS
-Compatible with EDR_System database structure and server expectations
+Linux Event Data Schemas - FIXED VERSION WITH EventSeverity (NO REGISTRY)
+Compatible with EDR_System database structure and Linux systems
 """
 
 from dataclasses import dataclass, field
@@ -10,13 +10,12 @@ from typing import Optional, Dict, Any, List
 from enum import Enum
 import logging
 
-# Define EventType enum that was missing
+# Define EventType enum - Linux specific (NO REGISTRY)
 class EventType(Enum):
-    """Event types matching database expectations"""
+    """Event types for Linux systems (no Registry)"""
     PROCESS = "Process"
     FILE = "File" 
     NETWORK = "Network"
-    REGISTRY = "Registry"
     AUTHENTICATION = "Authentication"
     SYSTEM = "System"
     CONTAINER_SECURITY = "Container_Security"
@@ -26,9 +25,14 @@ class EventType(Enum):
     SYSTEM_EVENT = "System_Event"
     SYSTEM_PERFORMANCE = "System_Performance"
     SYSTEM_SECURITY = "System_Security"
+    # Linux specific events
+    KERNEL = "Kernel"
+    SYSCTL = "Sysctl"  # /proc/sys monitoring
+    PROCFS = "Procfs"  # /proc filesystem monitoring
+    SYSFS = "Sysfs"    # /sys filesystem monitoring
 
 class EventAction(Enum):
-    """Event actions matching database expectations"""
+    """Event actions for Linux systems"""
     # Process actions
     START = "Start"
     STOP = "Stop" 
@@ -76,15 +80,30 @@ class EventAction(Enum):
     UNLOAD = "Unload"
     RESOURCE_USAGE = "Resource_Usage"
 
+# FIXED: Add missing EventSeverity enum
+class EventSeverity(Enum):
+    """Event severity levels"""
+    CRITICAL = "Critical"
+    HIGH = "High" 
+    MEDIUM = "Medium"
+    LOW = "Low"
+    INFO = "Info"
+    
+    # Additional severity levels for compatibility
+    INFORMATION = "Info"
+    WARNING = "Medium"
+    ERROR = "High"
+    FATAL = "Critical"
+
 @dataclass
 class EventData:
     """
-    Linux Event Data Structure - FIXED TO MATCH DATABASE SCHEMA
+    Linux Event Data Structure - FIXED FOR LINUX (NO REGISTRY)
     Maps to Events table in EDR_System database
     """
     
     # REQUIRED: Core event information matching database
-    event_type: str  # Maps to EventType (Process, File, Network, Registry, Authentication, System)
+    event_type: str  # Maps to EventType (Process, File, Network, Authentication, System)
     event_action: str  # Maps to EventAction  
     event_timestamp: datetime = field(default_factory=datetime.now)  # Maps to EventTimestamp
     severity: str = "Info"  # Maps to Severity
@@ -224,7 +243,8 @@ class EventData:
             raw_data.update({
                 'platform': 'linux',
                 'event_timestamp': self.event_timestamp.isoformat(),
-                'description': self.description
+                'description': self.description,
+                'no_registry': True  # Indicate this is Linux (no Registry support)
             })
             
             # Add optional fields that exist
@@ -248,7 +268,7 @@ class EventData:
             
             self.raw_event_data = raw_data  # Store as dict, not string
         except Exception as e:
-            self.raw_event_data = {'platform': 'linux', 'error': str(e)}
+            self.raw_event_data = {'platform': 'linux', 'error': str(e), 'no_registry': True}
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API submission"""
@@ -327,7 +347,7 @@ class EventData:
                 event_type="System",
                 event_action="Access",
                 description=f"Error creating event from dict: {e}",
-                raw_event_data={'platform': 'linux', 'error': str(e)}
+                raw_event_data={'platform': 'linux', 'error': str(e), 'no_registry': True}
             )
     
     def set_threat_indicators(self, threat_score: int, threat_description: str = None):
@@ -370,7 +390,7 @@ class EventData:
     def is_suspicious(self) -> bool:
         """Check if event has suspicious indicators"""
         return self.threat_level in ['Suspicious', 'Malicious'] or self.risk_score >= 30
-    
+
 # Factory functions for creating database-compatible events
 def create_process_event(pid: int, name: str, action: str = "Start", **kwargs) -> EventData:
     """Create process event compatible with database"""
@@ -427,6 +447,37 @@ def create_system_event(action: str, **kwargs) -> EventData:
         **kwargs
     )
 
+# Linux specific factory functions
+def create_procfs_event(proc_path: str, action: str = "Access", **kwargs) -> EventData:
+    """Create /proc filesystem event"""
+    return EventData(
+        event_type="Procfs",
+        event_action=action,
+        file_path=proc_path,
+        description=f"Linux /proc access: {proc_path}",
+        **kwargs
+    )
+
+def create_sysfs_event(sys_path: str, action: str = "Access", **kwargs) -> EventData:
+    """Create /sys filesystem event"""
+    return EventData(
+        event_type="Sysfs", 
+        event_action=action,
+        file_path=sys_path,
+        description=f"Linux /sys access: {sys_path}",
+        **kwargs
+    )
+
+def create_sysctl_event(sysctl_key: str, action: str = "Modify", **kwargs) -> EventData:
+    """Create sysctl (kernel parameter) event"""
+    return EventData(
+        event_type="Sysctl",
+        event_action=action,
+        description=f"Linux sysctl change: {sysctl_key}",
+        raw_event_data={'sysctl_key': sysctl_key, 'platform': 'linux'},
+        **kwargs
+    )
+
 def validate_event_for_database(event: EventData) -> tuple[bool, str]:
     """Validate event data for database insertion"""
     try:
@@ -440,8 +491,8 @@ def validate_event_for_database(event: EventData) -> tuple[bool, str]:
         if not event.event_action:
             return False, "Missing required field: event_action"
         
-        # Validate event_type
-        valid_event_types = ["Process", "File", "Network", "Registry", "Authentication", "System"]
+        # Validate event_type (Linux - no Registry)
+        valid_event_types = ["Process", "File", "Network", "Authentication", "System", "Procfs", "Sysfs", "Sysctl", "Kernel"]
         if event.event_type not in valid_event_types:
             return False, f"Invalid event_type: {event.event_type}. Must be one of {valid_event_types}"
         
