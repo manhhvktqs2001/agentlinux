@@ -74,14 +74,15 @@ class LinuxAuthenticationCollector(LinuxBaseCollector):
         self.security_scanning = True
         
         # Thresholds
-        self.failed_attempt_threshold = 5
-        self.brute_force_threshold = 10
-        self.suspicious_ip_threshold = 3
+        self.failed_attempt_threshold = 3
+        self.brute_force_threshold = 5
+        self.suspicious_ip_threshold = 2
         
         # Tracking
         self.last_auth_check = 0
         self.last_wtmp_check = 0
         self.last_btmp_check = 0
+        self.polling_interval = 45.0
         
     async def initialize(self):
         """Initialize authentication collector"""

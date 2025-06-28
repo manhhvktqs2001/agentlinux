@@ -534,25 +534,54 @@ class ServerCommunication:
     # ... (keep all existing methods from original communication.py)
     
     async def _test_connection(self):
-        """Test connection with proper error handling"""
+        """Test connection with proper error handling and retry logic"""
         try:
             url = f"{self.base_url}/api/v1/health/check"
+            self.logger.info(f"🔍 Testing connection to {url}")
             
-            async with self.session.get(url) as response:
-                if response.status == 200:
-                    self.is_connected = True
-                    self.consecutive_failures = 0
-                    self.logger.info("✅ Server connection test successful")
-                else:
-                    self.logger.warning(f"⚠️ Server returned status {response.status}")
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    async with self.session.get(url, timeout=10) as response:
+                        if response.status == 200:
+                            self.is_connected = True
+                            self.consecutive_failures = 0
+                            self.logger.info("✅ Basic connectivity successful")
+                            return True
+                        else:
+                            self.logger.warning(f"⚠️ Server returned status {response.status} (attempt {attempt + 1}/{max_retries})")
+                            
+                except asyncio.TimeoutError:
+                    self.logger.warning(f"⚠️ Connection timeout (attempt {attempt + 1}/{max_retries})")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2)
+                        
+                except aiohttp.ClientConnectorError as e:
+                    self.logger.warning(f"⚠️ Connection error (attempt {attempt + 1}/{max_retries}): {e}")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2)
+                        
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Unexpected error (attempt {attempt + 1}/{max_retries}): {e}")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2)
+            
+            # All attempts failed
+            self.is_connected = False
+            self.consecutive_failures += 1
+            self.logger.error(f"❌ Connection test failed after {max_retries} attempts")
+            return False
                     
         except Exception as e:
-            self.logger.warning(f"⚠️ Server connection test failed: {e}")
+            self.logger.error(f"❌ Connection test failed: {e}")
             self.is_connected = False
+            self.consecutive_failures += 1
+            return False
     
     async def _make_request(self, method: str, url: str, payload: Optional[Dict] = None) -> Optional[Dict]:
         """Make HTTP request with comprehensive error handling"""
         if not self.session:
+            self.logger.error("❌ No active session available")
             return None
         
         headers = {
@@ -563,19 +592,54 @@ class ServerCommunication:
         max_retries = self.retry_attempts
         for attempt in range(max_retries):
             try:
+                self.logger.debug(f"📡 Making {method} request to {url} (attempt {attempt + 1}/{max_retries})")
+                
                 if method.upper() == 'GET':
                     async with self.session.get(url, headers=headers, timeout=self.timeout) as response:
                         return await self._handle_response(response)
                 elif method.upper() == 'POST':
                     if payload:
-                        json_payload = json.dumps(payload, cls=JSONEncoder, default=serialize_datetime)
+                        try:
+                            json_payload = json.dumps(payload, cls=JSONEncoder, default=serialize_datetime)
+                        except Exception as e:
+                            self.logger.error(f"❌ JSON serialization failed: {e}")
+                            return None
+                    else:
+                        json_payload = None
                     
                     async with self.session.post(url, data=json_payload, headers=headers, timeout=self.timeout) as response:
                         return await self._handle_response(response)
+                else:
+                    self.logger.error(f"❌ Unsupported HTTP method: {method}")
+                    return None
+                    
+            except asyncio.TimeoutError:
+                self.logger.warning(f"⚠️ Request timeout (attempt {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                else:
+                    self.logger.error(f"❌ Request failed after {max_retries} attempts due to timeout")
+                    
+            except aiohttp.ClientConnectorError as e:
+                self.logger.warning(f"⚠️ Connection error (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                else:
+                    self.logger.error(f"❌ Request failed after {max_retries} attempts due to connection error")
+                    
+            except aiohttp.ClientError as e:
+                self.logger.warning(f"⚠️ Client error (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                else:
+                    self.logger.error(f"❌ Request failed after {max_retries} attempts due to client error")
                     
             except Exception as e:
+                self.logger.warning(f"⚠️ Unexpected error (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                else:
+                    self.logger.error(f"❌ Request failed after {max_retries} attempts due to unexpected error")
         
         return None
     
