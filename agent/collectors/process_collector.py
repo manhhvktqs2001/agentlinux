@@ -10,6 +10,7 @@ import time
 from datetime import datetime
 from typing import Dict, List, Optional
 from collections import defaultdict, deque
+import asyncio
 
 from agent.collectors.base_collector import LinuxBaseCollector
 from agent.schemas.events import EventData
@@ -18,82 +19,30 @@ class LinuxProcessCollector(LinuxBaseCollector):
     """✅ OPTIMIZED: Linux Process Collector with spam reduction"""
     
     def __init__(self, config_manager=None):
+        """✅ CONTINUOUS REALTIME: Initialize Linux Process Collector"""
         super().__init__(config_manager, "LinuxProcessCollector")
         
-        # ✅ OPTIMIZATION: Increased monitoring settings to reduce spam
-        self.polling_interval = 45.0         # Increased from 10 to 45 seconds
-        self.max_events_per_batch = 3        # Reduced from 10 to 3
+        # ✅ CONTINUOUS REALTIME: Very fast polling
+        self.polling_interval = self.config.get('collection', {}).get('polling_interval', 10)  # 10 seconds
+        self.max_events_per_batch = self.config.get('collection', {}).get('max_events_per_collection', 5)
         
-        # ✅ OPTIMIZATION: Enhanced process filtering
+        # ✅ CONTINUOUS REALTIME: No deduplication for realtime streaming
+        self.enable_deduplication = self.config.get('collection', {}).get('enable_deduplication', False)
+        self.event_dedup_window = self.config.get('collection', {}).get('deduplication_window', 0)
+        
+        # ✅ CONTINUOUS REALTIME: Reduced filtering for more events
+        self.min_process_lifetime = self.config.get('linux_specific', {}).get('min_process_lifetime', 5)  # 5 seconds
+        self.exclude_short_lived = self.config.get('linux_specific', {}).get('exclude_short_lived_processes', False)
+        
+        # ✅ CONTINUOUS REALTIME: Higher rate limits
+        self.max_events_per_minute = self.config.get('filters', {}).get('max_process_events_per_minute', 100)  # 100 events/minute
+        
+        # Process tracking
         self.monitored_processes = {}
         self.last_scan_pids = set()
-        self.process_history = deque(maxlen=100)  # Limited history
-        
-        # ✅ OPTIMIZATION: Stricter filtering
-        self.exclude_kernel_threads = True
-        self.exclude_short_lived = True
-        self.min_process_lifetime = 15.0     # Increased from 2 to 15 seconds
-        self.exclude_system_processes = True
-        self.exclude_agent_activity = True
-        
-        # ✅ OPTIMIZATION: Expanded exclusion lists
-        self.excluded_process_names = {
-            # Kernel threads
-            'kthreadd', 'ksoftirqd', 'migration', 'rcu_gp', 'rcu_par_gp',
-            'kworker', 'kcompactd', 'ksmd', 'khugepaged', 'kintegrityd',
-            'kblockd', 'blkcg_punt_bio', 'watchdog', 'rcu_',
-            
-            # System processes
-            'systemd', 'systemd-', 'dbus', 'NetworkManager', 'systemd-resolved',
-            'systemd-timesyncd', 'systemd-logind', 'systemd-machined',
-            'systemd-networkd', 'systemd-udevd', 'systemd-journald',
-            
-            # Desktop environment
-            'gnome-', 'kde-', 'xfce-', 'mate-', 'lxde-', 'pulseaudio',
-            'pipewire', 'wireplumber', 'gdm', 'lightdm', 'sddm',
-            
-            # Common services
-            'cron', 'rsyslog', 'accounts-daemon', 'polkitd', 'udisks2',
-            'packagekitd', 'snapd', 'thermald', 'irqbalance',
-            
-            # Browsers (can be noisy)
-            'firefox', 'chrome', 'chromium', 'brave', 'opera',
-            
-            # Editors and IDEs
-            'code', 'atom', 'sublime', 'vim', 'emacs', 'nano',
-            
-            # Our own agent
-            'python3', 'python', 'edr-agent'
-        }
-        
-        self.excluded_paths = {
-            '/lib/systemd', '/usr/lib/systemd', '/usr/sbin', '/sbin',
-            '/usr/lib/gnome', '/usr/lib/kde', '/usr/lib/xfce4',
-            '/snap', '/usr/bin/snap', '/var/lib/snapd'
-        }
-        
-        # ✅ OPTIMIZATION: Interesting processes (security-focused)
-        self.interesting_processes = {
-            'security': ['sudo', 'su', 'ssh', 'gpg', 'passwd', 'chsh', 'chfn'],
-            'network': ['nc', 'netcat', 'ncat', 'socat', 'telnet', 'wget', 'curl'],
-            'system': ['systemctl', 'service', 'mount', 'umount', 'fdisk'],
-            'shells': ['bash', 'sh', 'zsh', 'fish', 'tcsh', 'csh'],
-            'development': ['gcc', 'make', 'cmake', 'python3', 'node', 'java'],
-            'monitoring': ['htop', 'top', 'ps', 'netstat', 'ss', 'lsof']
-        }
-        
-        # ✅ OPTIMIZATION: Performance thresholds
-        self.high_cpu_threshold = 80
-        self.high_memory_threshold = 500 * 1024 * 1024  # 500MB
-        
-        # ✅ OPTIMIZATION: Event deduplication
-        self.recent_events = {}
-        self.event_dedup_window = 60  # 1 minute
-        
-        # ✅ OPTIMIZATION: Rate limiting
         self.events_this_minute = 0
         self.last_minute_reset = time.time()
-        self.max_events_per_minute = 5  # Strict limit
+        self.recent_events = {}
         
         # Statistics
         self.stats = {
@@ -105,20 +54,40 @@ class LinuxProcessCollector(LinuxBaseCollector):
             'rate_limited_events': 0
         }
         
-        self.logger.info("🐧 Optimized Linux Process Collector initialized")
-        self.logger.info(f"   ⏱️ Polling Interval: {self.polling_interval}s")
+        # ✅ CONTINUOUS REALTIME: Reduced exclusions for more events
+        self.excluded_process_names = self.config.get('filters', {}).get('exclude_process_names', [])
+        self.excluded_paths = self.config.get('filters', {}).get('exclude_process_paths', [])
+        self.exclude_kernel_threads = self.config.get('filters', {}).get('exclude_kernel_threads', False)
+        self.exclude_agent_activity = self.config.get('filters', {}).get('exclude_agent_activity', False)
+        
+        # Interesting processes for security monitoring
+        self.interesting_processes = {
+            'system': ['systemd', 'init', 'kthreadd', 'ksoftirqd'],
+            'network': ['sshd', 'apache2', 'nginx', 'postgres', 'mysql'],
+            'security': ['auditd', 'fail2ban', 'ufw', 'iptables'],
+            'monitoring': ['top', 'htop', 'iotop', 'nethogs'],
+            'development': ['python', 'node', 'java', 'gcc', 'make'],
+            'browsers': ['firefox', 'chrome', 'chromium', 'safari'],
+            'terminals': ['bash', 'zsh', 'fish', 'tmux', 'screen']
+        }
+        
+        self.logger.info("✅ Linux LinuxProcessCollector initialized")
+        self.logger.info("🐧 Continuous Realtime Linux Process Collector initialized")
+        self.logger.info(f"   ⏱ Polling Interval: {self.polling_interval}s")
         self.logger.info(f"   📊 Max Events/Batch: {self.max_events_per_batch}")
         self.logger.info(f"   ⏳ Min Process Lifetime: {self.min_process_lifetime}s")
         self.logger.info(f"   🚫 Excluded Processes: {len(self.excluded_process_names)}")
+        self.logger.info(f"   🔄 Continuous Mode: Enabled")
+        self.logger.info(f"   📡 Realtime Streaming: No Delays")
     
     async def _collect_data(self):
-        """✅ OPTIMIZED: Collect process events with aggressive filtering"""
+        """✅ REALTIME: Collect and send process events immediately"""
         try:
             start_time = time.time()
             events = []
             current_pids = set()
             
-            # ✅ OPTIMIZATION: Rate limiting check
+            # ✅ REALTIME: Rate limiting check
             if not self._check_rate_limit():
                 self.logger.debug("Rate limit reached, skipping collection")
                 return []
@@ -139,7 +108,7 @@ class LinuxProcessCollector(LinuxBaseCollector):
                             filtered_processes += 1
                             continue
                         
-                        # ✅ OPTIMIZATION: Apply comprehensive filtering
+                        # ✅ REALTIME: Apply comprehensive filtering
                         if self._should_filter_process(proc_info):
                             filtered_processes += 1
                             continue
@@ -148,15 +117,20 @@ class LinuxProcessCollector(LinuxBaseCollector):
                         
                         # Check for new process
                         if pid not in self.monitored_processes:
-                            # ✅ OPTIMIZATION: Additional lifetime check
+                            # ✅ REALTIME: Additional lifetime check
                             if self._check_process_lifetime(proc_info):
                                 event = await self._create_process_start_event(proc_info)
                                 if event and self._is_event_worth_sending(event):
+                                    # ✅ REALTIME: Send event immediately
+                                    await self._send_event_immediately(event)
                                     events.append(event)
                                     self.stats['process_creation_events'] += 1
                                     self._increment_event_count()
                                     
-                                    # ✅ OPTIMIZATION: Stop if we hit batch limit
+                                    # ✅ REALTIME: Log immediately
+                                    self.logger.info(f"🐧 Linux Process Event: Start - Agent: {self.agent_id[:8]}...")
+                                    
+                                    # ✅ REALTIME: Stop if we hit batch limit
                                     if len(events) >= self.max_events_per_batch:
                                         break
                         
@@ -177,7 +151,7 @@ class LinuxProcessCollector(LinuxBaseCollector):
                 self.logger.error(f"Error iterating processes: {e}")
                 return []
             
-            # ✅ OPTIMIZATION: Only process terminations for interesting processes
+            # ✅ REALTIME: Only process terminations for interesting processes
             if len(events) < self.max_events_per_batch:
                 terminated_pids = self.last_scan_pids - current_pids
                 for pid in list(terminated_pids)[:2]:  # Limit to 2 termination events
@@ -186,9 +160,14 @@ class LinuxProcessCollector(LinuxBaseCollector):
                         if self._is_interesting_process(proc_data.get('name', '')):
                             event = await self._create_process_end_event(pid, proc_data)
                             if event and self._is_event_worth_sending(event):
+                                # ✅ REALTIME: Send event immediately
+                                await self._send_event_immediately(event)
                                 events.append(event)
                                 self.stats['process_termination_events'] += 1
                                 self._increment_event_count()
+                                
+                                # ✅ REALTIME: Log immediately
+                                self.logger.info(f"🐧 Linux Process Event: End - Agent: {self.agent_id[:8]}...")
                         del self.monitored_processes[pid]
             
             # Update tracking
@@ -196,7 +175,7 @@ class LinuxProcessCollector(LinuxBaseCollector):
             self.stats['total_process_events'] += len(events)
             self.stats['filtered_events'] += filtered_processes
             
-            # ✅ OPTIMIZATION: Log collection efficiency
+            # ✅ REALTIME: Log collection efficiency
             collection_time = (time.time() - start_time) * 1000
             if events:
                 self.logger.info(f"🐧 Generated {len(events)} process events ({collection_time:.1f}ms)")
@@ -487,6 +466,24 @@ class LinuxProcessCollector(LinuxBaseCollector):
         except Exception:
             return 0
     
+    async def _send_event_immediately(self, event: EventData):
+        """✅ REALTIME: Send event immediately to event processor"""
+        try:
+            self.logger.info(f"🔍 Attempting to send event immediately: {event.process_name}")
+            
+            if self.event_processor:
+                self.logger.info(f"✅ Event processor found, sending event: {event.process_name}")
+                # Send event directly to event processor for immediate processing
+                await self.event_processor.add_event(event)
+                self.logger.info(f"✅ Event sent immediately: {event.process_name}")
+            else:
+                self.logger.error("❌ No event processor available for immediate sending")
+                self.logger.error(f"❌ Event processor is: {self.event_processor}")
+        except Exception as e:
+            self.logger.error(f"❌ Failed to send event immediately: {e}")
+            import traceback
+            self.logger.error(f"❌ Traceback: {traceback.format_exc()}")
+    
     def get_stats(self) -> Dict:
         """Get detailed process collector statistics"""
         base_stats = super().get_stats()
@@ -507,3 +504,55 @@ class LinuxProcessCollector(LinuxBaseCollector):
             'optimization_version': '2.1.0-Optimized'
         })
         return base_stats
+
+    async def _collection_loop(self):
+        """✅ CONTINUOUS REALTIME: Continuous collection loop with no delays"""
+        self.logger.info(f"🔄 Starting Linux collection loop: {self.collector_name}")
+        
+        try:
+            while self.is_running:
+                try:
+                    # ✅ CONTINUOUS REALTIME: Collect data immediately
+                    events = await self._collect_data()
+                    
+                    # ✅ CONTINUOUS REALTIME: Send events immediately
+                    if events:
+                        for event in events:
+                            await self._send_event_immediately(event)
+                            self.logger.info(f"📡 Continuous Event Sent: {event.process_name}")
+                    
+                    # ✅ CONTINUOUS REALTIME: Very short sleep for continuous monitoring
+                    await asyncio.sleep(self.polling_interval)
+                    
+                except asyncio.CancelledError:
+                    self.logger.info(f"🛑 Collection loop cancelled: {self.collector_name}")
+                    break
+                except Exception as e:
+                    self.logger.error(f"❌ Collection loop error: {e}")
+                    await asyncio.sleep(5)  # Short delay on error
+                    
+        except Exception as e:
+            self.logger.error(f"❌ Collection loop failed: {e}")
+        finally:
+            self.logger.info(f"🛑 Collection loop stopped: {self.collector_name}")
+
+    async def start(self):
+        """✅ CONTINUOUS REALTIME: Start process collector with continuous monitoring"""
+        try:
+            if not self.is_initialized:
+                await self.initialize()
+            
+            self.is_running = True
+            self.start_time = datetime.now()
+            
+            self.logger.info(f"🚀 Starting Linux collector: {self.collector_name}")
+            
+            # ✅ CONTINUOUS REALTIME: Start our custom collection loop
+            asyncio.create_task(self._collection_loop())
+            
+            self.logger.info(f"✅ Linux collector started: {self.collector_name}")
+            
+        except Exception as e:
+            self.logger.error(f"❌ {self.collector_name} start failed: {e}")
+            self.is_running = False
+            raise Exception(f"Linux collector start failed: {e}")

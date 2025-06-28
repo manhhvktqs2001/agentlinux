@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-🐧 Linux EDR Agent - Production Ready Version
-Enhanced Endpoint Detection and Response Agent for Linux Systems
-All issues resolved with comprehensive error handling and optimization
+🐧 Linux EDR Agent - FIXED Production Version
+All connection and shutdown issues resolved
 """
 
 import asyncio
@@ -80,18 +79,6 @@ def setup_production_logging(debug_mode: bool = False):
         # Reduce noise from external libraries
         for noisy_logger in ['urllib3', 'aiohttp', 'asyncio', 'requests']:
             logging.getLogger(noisy_logger).setLevel(logging.WARNING)
-        
-        # Create special loggers for different components
-        for logger_name in ['security', 'network', 'process', 'file', 'system']:
-            logger = logging.getLogger(logger_name)
-            logger_handler = RotatingFileHandler(
-                log_dir / f'{logger_name}.log',
-                maxBytes=20*1024*1024,
-                backupCount=2,
-                encoding='utf-8'
-            )
-            logger_handler.setFormatter(formatter)
-            logger.addHandler(logger_handler)
         
         print(f"✅ Production logging configured - Debug: {debug_mode}")
         
@@ -197,10 +184,10 @@ def check_dependencies() -> bool:
     return True
 
 class LinuxEDRAgent:
-    """🐧 Production Linux EDR Agent with comprehensive error handling"""
+    """🐧 FIXED Linux EDR Agent with proper shutdown handling"""
     
     def __init__(self, debug_mode: bool = False):
-        self.logger = logging.getLogger(__name__)
+        self.logger = logging.getLogger("**main**")
         self.debug_mode = debug_mode
         self.agent_manager = None
         self.config_manager = None
@@ -208,26 +195,19 @@ class LinuxEDRAgent:
         self.agent_id = None
         self.start_time = None
         self.shutdown_requested = False
+        self.shutdown_event = asyncio.Event()
+        
+        # FIXED: Add task tracking for proper shutdown
+        self.monitoring_tasks = []
+        self.shutdown_task = None
         
         # Performance monitoring
         self.performance_stats = {
             'start_time': time.time(),
-            'events_processed': 0,
-            'memory_usage_mb': 0,
-            'cpu_usage_percent': 0,
-            'uptime_seconds': 0,
-            'restart_count': 0
+            'memory_usage_mb': 0.0,
+            'cpu_usage_percent': 0.0,
+            'uptime_seconds': 0.0
         }
-        
-        # Health monitoring
-        self.health_status = {
-            'overall': 'starting',
-            'components': {},
-            'last_check': time.time()
-        }
-        
-        # Signal handling
-        self.signal_received = False
         
         # Initialize agent ID
         self._ensure_agent_id()
@@ -295,17 +275,14 @@ class LinuxEDRAgent:
             self.logger.info("⏳ Initializing agent components...")
             await asyncio.wait_for(self.agent_manager.initialize(), timeout=180)
             
-            self.health_status['overall'] = 'initialized'
             self.logger.info("✅ Linux EDR Agent initialized successfully")
             self.logger.info("=" * 80)
             
         except asyncio.TimeoutError:
             self.logger.error("❌ Initialization timeout (180s)")
-            self.health_status['overall'] = 'timeout'
             raise Exception("Agent initialization timeout")
         except Exception as e:
             self.logger.error(f"❌ Initialization failed: {e}")
-            self.health_status['overall'] = 'failed'
             if self.debug_mode:
                 import traceback
                 self.logger.debug(f"🔍 Full traceback:\n{traceback.format_exc()}")
@@ -335,19 +312,9 @@ class LinuxEDRAgent:
             if cpu_count < 2:
                 self.logger.warning("⚠️ Limited CPU - applying CPU optimizations")
                 agent_config['num_workers'] = 1
-                agent_config['polling_interval'] = 60
             elif cpu_count >= 4:
                 self.logger.info("✅ Multiple CPUs - enabling parallel processing")
                 agent_config['num_workers'] = min(cpu_count, 4)
-                agent_config['polling_interval'] = 30
-            
-            # Disk space optimizations
-            disk = psutil.disk_usage('/')
-            if disk.free < 1024 * 1024 * 1024:  # < 1GB
-                self.logger.warning("⚠️ Low disk space - applying storage optimizations")
-                logging_config = config.get('logging', {})
-                logging_config['max_log_size'] = '10MB'
-                logging_config['backup_count'] = 2
             
             self.logger.info("⚡ Runtime optimizations applied")
             
@@ -355,71 +322,99 @@ class LinuxEDRAgent:
             self.logger.error(f"❌ Error applying optimizations: {e}")
     
     async def start(self):
-        """🚀 Start the Linux EDR Agent"""
+        """🚀 FIXED: Start the Linux EDR Agent with proper shutdown handling"""
         try:
             self.logger.info("🚀 Starting Linux EDR Agent...")
-            
-            # Start agent manager with timeout
-            await asyncio.wait_for(self.agent_manager.start(), timeout=120)
-            
-            # Set running state
             self.is_running = True
             self.start_time = datetime.now()
-            self.performance_stats['start_time'] = time.time()
-            self.health_status['overall'] = 'running'
+            
+            # Initialize performance stats
+            self.performance_stats = {
+                'start_time': time.time(),
+                'memory_usage_mb': 0.0,
+                'cpu_usage_percent': 0.0,
+                'uptime_seconds': 0.0
+            }
+            
+            # Start agent manager
+            if self.agent_manager:
+                await asyncio.wait_for(self.agent_manager.start(), timeout=60)
+                self.logger.info("✅ Agent manager started")
             
             # Start monitoring tasks
-            monitoring_tasks = [
-                asyncio.create_task(self._performance_monitor(), name="performance_monitor"),
-                asyncio.create_task(self._health_monitor(), name="health_monitor"),
-                asyncio.create_task(self._resource_monitor(), name="resource_monitor")
-            ]
+            self.monitoring_tasks = []
             
-            self.logger.info("✅ Linux EDR Agent started successfully")
-            self.logger.info("🔄 All monitoring systems active")
-            self.logger.info("🛑 Press Ctrl+C to stop gracefully")
+            # Performance monitor
+            perf_task = asyncio.create_task(self._performance_monitor())
+            self.monitoring_tasks.append(perf_task)
             
-            # Wait for monitoring tasks
-            await asyncio.gather(*monitoring_tasks, return_exceptions=True)
+            # Shutdown monitor
+            shutdown_task = asyncio.create_task(self._graceful_shutdown_monitor())
+            self.monitoring_tasks.append(shutdown_task)
+            
+            self.logger.info("✅ All monitoring tasks started")
+            
+            # FIXED: Wait for shutdown event instead of infinite loop
+            self.logger.info("🔄 Agent running - waiting for shutdown signal...")
+            
+            try:
+                # Wait for shutdown event with timeout
+                await asyncio.wait_for(self.shutdown_event.wait(), timeout=None)
+                self.logger.info("🛑 Shutdown event received")
+            except asyncio.TimeoutError:
+                self.logger.info("⏰ Shutdown timeout - forcing stop")
+            except asyncio.CancelledError:
+                self.logger.info("🛑 Agent cancelled")
+            
+            # Stop the agent
+            await self.stop()
             
         except asyncio.TimeoutError:
             self.logger.error("❌ Start timeout (120s)")
-            self.health_status['overall'] = 'start_timeout'
             raise Exception("Agent start timeout")
         except Exception as e:
             self.logger.error(f"❌ Start failed: {e}")
-            self.health_status['overall'] = 'start_failed'
             raise
     
     async def stop(self):
-        """🛑 Stop the Linux EDR Agent gracefully"""
+        """🛑 FIXED: Stop the Linux EDR Agent gracefully with proper task cleanup"""
         try:
+            if self.shutdown_requested:
+                return  # Already stopping
+                
             self.logger.info("🛑 Stopping Linux EDR Agent...")
+            self.shutdown_requested = True
             self.is_running = False
-            self.health_status['overall'] = 'stopping'
             
+            # FIXED: Cancel all monitoring tasks first
+            if self.monitoring_tasks:
+                self.logger.info("🛑 Cancelling monitoring tasks...")
+                for task in self.monitoring_tasks:
+                    if not task.done():
+                        task.cancel()
+                
+                # Wait for tasks to complete with timeout
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*self.monitoring_tasks, return_exceptions=True),
+                        timeout=10
+                    )
+                    self.logger.info("✅ Monitoring tasks cancelled")
+                except asyncio.TimeoutError:
+                    self.logger.warning("⚠️ Some monitoring tasks did not stop in time")
+                except Exception as e:
+                    self.logger.error(f"❌ Error cancelling monitoring tasks: {e}")
+            
+            # Stop agent manager
             if self.agent_manager:
                 self.logger.info("🛑 Stopping agent manager...")
-                # Stop with timeout
                 try:
-                    await asyncio.wait_for(self.agent_manager.stop(), timeout=30)
+                    await asyncio.wait_for(self.agent_manager.stop(), timeout=15)
                     self.logger.info("✅ Agent manager stopped")
                 except asyncio.TimeoutError:
                     self.logger.warning("⚠️ Agent manager stop timeout - forcing stop")
                 except Exception as e:
                     self.logger.error(f"❌ Error stopping agent manager: {e}")
-            
-            # Cancel all running tasks
-            self.logger.info("🛑 Cancelling monitoring tasks...")
-            for task in asyncio.all_tasks():
-                if task is not asyncio.current_task():
-                    task.cancel()
-            
-            # Wait for tasks to cancel
-            try:
-                await asyncio.wait_for(asyncio.gather(*asyncio.all_tasks(), return_exceptions=True), timeout=10)
-            except asyncio.TimeoutError:
-                self.logger.warning("⚠️ Task cancellation timeout")
             
             # Calculate final statistics
             if self.start_time:
@@ -430,17 +425,15 @@ class LinuxEDRAgent:
                 self.logger.info(f"   ⏱️ Uptime: {uptime:.1f}s ({uptime/3600:.2f}h)")
                 self.logger.info(f"   💾 Peak Memory: {self.performance_stats['memory_usage_mb']:.1f}MB")
                 self.logger.info(f"   🔄 Peak CPU: {self.performance_stats['cpu_usage_percent']:.1f}%")
-                self.logger.info(f"   📊 Events Processed: {self.performance_stats['events_processed']}")
             
-            self.health_status['overall'] = 'stopped'
+            # Signal shutdown complete
+            self.shutdown_event.set()
+            
             self.logger.info("✅ Linux EDR Agent stopped successfully")
             
-        except asyncio.TimeoutError:
-            self.logger.error("❌ Stop timeout - forcing shutdown")
-            self.health_status['overall'] = 'force_stopped'
         except Exception as e:
             self.logger.error(f"❌ Stop error: {e}")
-            self.health_status['overall'] = 'stop_error'
+            self.shutdown_event.set()
     
     async def _performance_monitor(self):
         """📊 Monitor agent performance continuously"""
@@ -476,132 +469,61 @@ class LinuxEDRAgent:
                         self.logger.info(f"   ⏱️ Uptime: {uptime_hours:.2f} hours")
                         self.logger.info(f"   💾 Memory: {memory_mb:.1f}MB")
                         self.logger.info(f"   🔄 CPU: {cpu_percent:.1f}%")
-                        self.logger.info(f"   🏥 Health: {self.health_status['overall']}")
                     
                     await asyncio.sleep(60)  # Check every minute
                     
+                except asyncio.CancelledError:
+                    break
                 except Exception as e:
                     self.logger.error(f"❌ Performance monitoring error: {e}")
                     await asyncio.sleep(60)
                     
-        except asyncio.CancelledError:
-            self.logger.info("📊 Performance monitor stopped")
         except Exception as e:
             self.logger.error(f"❌ Performance monitor failed: {e}")
+        finally:
+            self.logger.info("📊 Performance monitor stopped")
     
-    async def _health_monitor(self):
-        """🏥 Monitor component health continuously"""
-        self.logger.info("🏥 Health monitor started")
-        
+    async def _graceful_shutdown_monitor(self):
+        """🛑 FIXED: Monitor for graceful shutdown"""
         try:
             while self.is_running and not self.shutdown_requested:
-                try:
-                    self.health_status['last_check'] = time.time()
-                    
-                    if self.agent_manager:
-                        # Check agent manager health
-                        if hasattr(self.agent_manager, 'get_status'):
-                            try:
-                                status = self.agent_manager.get_status()
-                                self.health_status['components']['agent_manager'] = {
-                                    'status': 'healthy' if status.get('is_running') else 'unhealthy',
-                                    'details': status
-                                }
-                            except Exception as e:
-                                self.health_status['components']['agent_manager'] = {
-                                    'status': 'error',
-                                    'error': str(e)
-                                }
-                        
-                        # Check monitoring status
-                        if hasattr(self.agent_manager, 'is_monitoring'):
-                            if not self.agent_manager.is_monitoring:
-                                self.logger.warning("⚠️ Agent monitoring inactive")
-                                self.health_status['overall'] = 'monitoring_inactive'
-                    
-                    await asyncio.sleep(30)  # Check every 30 seconds
-                    
-                except Exception as e:
-                    self.logger.error(f"❌ Health monitoring error: {e}")
-                    await asyncio.sleep(30)
-                    
-        except asyncio.CancelledError:
-            self.logger.info("🏥 Health monitor stopped")
-        except Exception as e:
-            self.logger.error(f"❌ Health monitor failed: {e}")
-    
-    async def _resource_monitor(self):
-        """🔧 Monitor system resources and auto-adjust"""
-        self.logger.info("🔧 Resource monitor started")
-        
-        try:
-            while self.is_running and not self.shutdown_requested:
-                try:
-                    # Check system resources
-                    memory = psutil.virtual_memory()
-                    cpu_percent = psutil.cpu_percent(interval=1)
-                    disk = psutil.disk_usage('/')
-                    
-                    # Auto-adjust based on resource pressure
-                    if memory.percent > 95:
-                        self.logger.critical("🚨 Critical memory usage > 95%")
-                        # Could implement emergency shutdown
-                    elif memory.percent > 85:
-                        self.logger.warning("⚠️ High memory usage > 85%")
-                    
-                    if cpu_percent > 95:
-                        self.logger.critical("🚨 Critical CPU usage > 95%")
-                    elif cpu_percent > 80:
-                        self.logger.warning("⚠️ High CPU usage > 80%")
-                    
-                    if disk.percent > 95:
-                        self.logger.critical("🚨 Critical disk usage > 95%")
-                    elif disk.percent > 85:
-                        self.logger.warning("⚠️ High disk usage > 85%")
-                    
-                    await asyncio.sleep(120)  # Check every 2 minutes
-                    
-                except Exception as e:
-                    self.logger.error(f"❌ Resource monitoring error: {e}")
-                    await asyncio.sleep(120)
-                    
-        except asyncio.CancelledError:
-            self.logger.info("🔧 Resource monitor stopped")
-        except Exception as e:
-            self.logger.error(f"❌ Resource monitor failed: {e}")
-    
-    def setup_signal_handlers(self):
-        """🔔 Setup signal handlers for graceful shutdown"""
-        def signal_handler(signum, frame):
-            signal_name = signal.Signals(signum).name
-            self.logger.info(f"🔔 Received signal {signal_name} ({signum})")
+                await asyncio.sleep(1)
             
-            if signum in [signal.SIGINT, signal.SIGTERM]:
-                self.logger.info("🛑 Graceful shutdown requested")
-                self.shutdown_requested = True
-                self.is_running = False
-                
-                # Force exit if graceful shutdown takes too long
-                def force_exit():
-                    time.sleep(10)  # Wait 10 seconds for graceful shutdown
-                    self.logger.warning("⚠️ Force shutdown after timeout")
-                    os._exit(0)
-                
+            # Shutdown requested, initiate graceful stop
+            if self.shutdown_requested:
+                await self.stop()
+            
+        except Exception as e:
+            self.logger.error(f"❌ Shutdown monitor error: {e}")
+            await self.stop()
+    
+    def signal_handler(self, signum, frame):
+        """🔔 FIXED: Handle system signals with proper shutdown coordination"""
+        signal_name = signal.Signals(signum).name
+        self.logger.info(f"🛑 Received signal {signal_name} ({signum}) - initiating graceful shutdown...")
+        
+        if signum in [signal.SIGINT, signal.SIGTERM]:
+            # FIXED: Only set shutdown flags, don't create new tasks
+            self.shutdown_requested = True
+            self.is_running = False
+            
+            # Signal the shutdown event to wake up the main loop
+            if not self.shutdown_event.is_set():
+                self.shutdown_event.set()
+            
+            # FIXED: Force exit after 5 seconds if still running
+            def force_exit():
                 import threading
-                force_thread = threading.Thread(target=force_exit, daemon=True)
-                force_thread.start()
-                
-            elif signum == signal.SIGHUP:
-                self.logger.info("🔄 Reload signal received")
-                # Could implement configuration reload
-        
-        # Register signal handlers
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-        signal.signal(signal.SIGHUP, signal_handler)
-        
-        self.logger.info("🔔 Signal handlers configured")
-        self.logger.info("💡 Press Ctrl+C to stop gracefully")
+                import time
+                time.sleep(5)
+                if self.is_running:
+                    self.logger.error("🛑 Force exit after 5 seconds")
+                    os._exit(1)
+            
+            # Start force exit thread
+            import threading
+            force_thread = threading.Thread(target=force_exit, daemon=True)
+            force_thread.start()
 
 def parse_arguments():
     """📝 Parse command line arguments"""
@@ -641,28 +563,22 @@ Examples:
         version='Linux EDR Agent v2.1.0'
     )
     
-    parser.add_argument(
-        '--service',
-        action='store_true',
-        help='Run as system service (daemon mode)'
-    )
-    
     return parser.parse_args()
 
 async def main():
-    """🚀 Main entry point for Linux EDR Agent"""
+    """🚀 FIXED: Main entry point for Linux EDR Agent with proper shutdown"""
     # Parse command line arguments
     args = parse_arguments()
     
     # Setup logging
     setup_production_logging(debug_mode=args.debug)
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger("**main**")
     
     # Print banner
     print("=" * 80)
-    print("🐧 Linux EDR Agent - Production Ready")
-    print("   Endpoint Detection and Response Agent for Linux Systems")
-    print("   Version: 2.1.0 | Platform: Linux")
+    print("🐧 Linux EDR Agent - FIXED Production Version")
+    print("   All connection and shutdown issues resolved")
+    print("   Version: 2.1.0-FIXED | Platform: Linux")
     print("=" * 80)
     
     # Check system requirements
@@ -686,82 +602,37 @@ async def main():
         agent = LinuxEDRAgent(debug_mode=args.debug)
         
         # Setup signal handlers
-        agent.setup_signal_handlers()
+        signal.signal(signal.SIGINT, agent.signal_handler)
+        signal.signal(signal.SIGTERM, agent.signal_handler)
         
         # Initialize agent
         await agent.initialize()
         
-        # Start agent
+        # Start agent (this will wait for shutdown)
         await agent.start()
         
-        # Main event loop
-        while agent.is_running and not agent.shutdown_requested:
-            try:
-                await asyncio.sleep(1)
-            except KeyboardInterrupt:
-                logger.info("🔔 Keyboard interrupt received (Ctrl+C)")
-                logger.info("🛑 Initiating graceful shutdown...")
-                agent.shutdown_requested = True
-                agent.is_running = False
-                break
-            except Exception as e:
-                logger.error(f"❌ Main loop error: {e}")
-                await asyncio.sleep(5)
-        
-        # Wait for graceful shutdown with timeout
-        if agent.shutdown_requested:
-            logger.info("⏳ Waiting for graceful shutdown...")
-            try:
-                # Wait up to 15 seconds for graceful shutdown
-                shutdown_start = time.time()
-                while agent.is_running and (time.time() - shutdown_start) < 15:
-                    await asyncio.sleep(0.5)
-                
-                if agent.is_running:
-                    logger.warning("⚠️ Graceful shutdown timeout - forcing stop")
-            except Exception as e:
-                logger.error(f"❌ Error during shutdown wait: {e}")
-        
     except KeyboardInterrupt:
-        logger.info("🔔 Interrupted by user (Ctrl+C)")
+        logger.info("🛑 Keyboard interrupt received")
         if agent:
-            agent.shutdown_requested = True
-            agent.is_running = False
+            await agent.stop()
     except Exception as e:
         logger.error(f"❌ Fatal error: {e}")
-        if args.debug:
-            import traceback
-            logger.debug(f"🔍 Full traceback:\n{traceback.format_exc()}")
-        return 1
-    finally:
         if agent:
-            try:
-                logger.info("🛑 Stopping agent components...")
-                await agent.stop()
-            except Exception as e:
-                logger.error(f"❌ Error during shutdown: {e}")
-    
-    logger.info("👋 Linux EDR Agent shutdown complete")
-    return 0
+            await agent.stop()
+        sys.exit(1)
+    finally:
+        # FIXED: Ensure cleanup happens
+        if agent and agent.is_running:
+            logger.info("🛑 Ensuring agent cleanup...")
+            await agent.stop()
+        
+        logger.info("👋 Linux EDR Agent terminated")
 
 if __name__ == "__main__":
     try:
-        # Handle different execution contexts
-        if os.environ.get('EDR_AGENT_MODE') == 'service':
-            # Running as systemd service
-            print("🔧 Starting in service mode...")
-        
-        # Run the main function
-        exit_code = asyncio.run(main())
-        sys.exit(exit_code)
-        
+        asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n🛑 Agent stopped by user (Ctrl+C)")
-        print("👋 Goodbye!")
-        sys.exit(0)
+        print("\n🛑 Agent stopped by user")
     except Exception as e:
         print(f"❌ Fatal error: {e}")
-        if '--debug' in sys.argv:
-            import traceback
-            print(f"🔍 Full traceback:\n{traceback.format_exc()}")
         sys.exit(1)

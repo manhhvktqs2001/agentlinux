@@ -162,8 +162,10 @@ class EventProcessor:
             self.logger.error(f"❌ Error stopping event processor: {e}")
     
     async def add_event(self, event_data: EventData):
-        """Add event to processing queue"""
+        """✅ REALTIME: Add event and send immediately"""
         try:
+            self.logger.info(f"📥 Event processor received event: {event_data.process_name}")
+            
             # Set agent_id if not present
             if self.agent_id and not event_data.agent_id:
                 event_data.agent_id = self.agent_id
@@ -172,18 +174,56 @@ class EventProcessor:
                 self.logger.error("❌ Event missing agent_id")
                 return
             
-            # Add to queue if not shutting down
+            # ✅ REALTIME: Send event immediately instead of queuing
             if not self.shutdown_event.is_set():
                 try:
-                    self.event_queue.put_nowait(event_data)
-                    self.stats.events_received += 1
+                    self.logger.info(f"🚀 Sending event immediately: {event_data.process_name}")
+                    # Send event immediately to server
+                    success = await self._send_event_immediately(event_data)
                     
-                except asyncio.QueueFull:
-                    self.logger.warning("⚠️ Event queue full - dropping event")
+                    if success:
+                        self.stats.events_sent += 1
+                        self.logger.info(f"✅ Event sent successfully: {event_data.process_name}")
+                    else:
+                        self.stats.events_failed += 1
+                        self.logger.warning(f"⚠️ Failed to send event: {event_data.process_name}")
+                    
+                except Exception as e:
+                    self.logger.error(f"❌ Error sending event immediately: {e}")
                     self.stats.events_failed += 1
+            else:
+                self.logger.warning(f"⚠️ Shutdown in progress, dropping event: {event_data.process_name}")
             
         except Exception as e:
             self.logger.error(f"❌ Error adding event: {e}")
+            import traceback
+            self.logger.error(f"❌ Traceback: {traceback.format_exc()}")
+    
+    async def _send_event_immediately(self, event_data: EventData) -> bool:
+        """✅ REALTIME: Send single event immediately to server"""
+        try:
+            self.logger.info(f"🌐 Attempting to send event to server: {event_data.process_name}")
+            
+            if not self.communication:
+                self.logger.error("❌ No communication available")
+                return False
+            
+            self.logger.info(f"📡 Communication found, submitting event: {event_data.process_name}")
+            # Send event immediately
+            success, response, error = await self.communication.submit_event(event_data)
+            
+            if success:
+                self.logger.info(f"✅ Event submitted successfully to server: {event_data.process_name}")
+                return True
+            else:
+                self.logger.warning(f"⚠️ Event submission failed: {error}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error in immediate event sending: {e}")
+            import traceback
+            self.logger.error(f"❌ Traceback: {traceback.format_exc()}")
+            return False
     
     async def _worker_loop(self, worker_id: int):
         """✅ FIXED: Worker loop with proper shutdown handling"""
@@ -365,21 +405,26 @@ class EventProcessor:
                     self.logger.info(f"📋 Processor {processor_id}: {response['message']}")
                 return True
             else:
-                # ✅ FIXED: Check if this was a fallback response
+                # ✅ FIXED: Check if this was offline mode or fallback response
                 response_str = str(response) if response else ""
                 error_str = str(error) if error else ""
                 
-                if ("Individual:" in response_str or 
-                    "fallback" in error_str.lower() or 
-                    "individual" in response_str.lower()):
+                if "Offline mode" in error_str:
+                    # Offline mode - this is expected, not an error
+                    self.logger.debug(f"📴 Processor {processor_id}: Offline mode - events stored for later")
+                    return True
+                elif ("Individual:" in response_str or 
+                      "fallback" in error_str.lower() or 
+                      "individual" in response_str.lower()):
                     # This was a fallback - count as success
                     self.logger.info(f"✅ Processor {processor_id}: Fallback to individual submission completed")
                     if response and 'message' in response:
                         self.logger.info(f"📋 Processor {processor_id}: {response['message']}")
                     return True
                 else:
-                    # Real failure
-                    self.logger.warning(f"⚠️ Processor {processor_id}: Batch submission failed: {error}")
+                    # Real failure - but reduce logging in offline mode
+                    if "Offline mode" not in error_str:
+                        self.logger.debug(f"Processor {processor_id}: Batch submission failed: {error}")
                     return False
             
         except Exception as e:

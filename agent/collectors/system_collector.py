@@ -240,33 +240,45 @@ class LinuxSystemCollector(LinuxBaseCollector):
             self.logger.error(f"❌ Security monitoring setup failed: {e}")
     
     async def _collect_data(self):
-        """✅ FIXED: Implement abstract method for Linux system data collection"""
+        """✅ FIXED: Implement abstract method for Linux system data collection with rate limiting"""
         try:
             if not self.is_running:
                 return []
             
             events = []
+            current_time = time.time()
             
-            # Monitor services
-            if self.monitor_services and self.systemd_available:
+            # ✅ FIXED: Rate limiting - only collect every 30 seconds
+            if hasattr(self, '_last_collection_time') and current_time - self._last_collection_time < 30:
+                return []
+            
+            self._last_collection_time = current_time
+            
+            # ✅ FIXED: Security scanning - only every 2 minutes
+            if self.security_scanning and current_time % 120 < 5:
+                security_events = await self._perform_security_scan()
+                events.extend(security_events)
+            
+            # ✅ FIXED: Service monitoring - only every 60 seconds
+            if self.monitor_services and self.systemd_available and current_time % 60 < 5:
                 service_events = await self._monitor_services()
                 events.extend(service_events)
             
-            # Monitor system events
-            if self.monitor_system_events:
+            # ✅ FIXED: System events - only every 120 seconds
+            if self.monitor_system_events and current_time % 120 < 5:
                 system_events = await self._monitor_system_events()
                 events.extend(system_events)
             
-            # Collect performance data
-            if self.collect_performance and time.time() - self.last_performance_check > self.performance_check_interval:
+            # ✅ FIXED: Performance data - only every 300 seconds (5 minutes)
+            if self.collect_performance and current_time - self.last_performance_check > 300:
                 performance_events = await self._collect_performance_data()
                 events.extend(performance_events)
-                self.last_performance_check = time.time()
+                self.last_performance_check = current_time
             
-            # Security scanning
-            if self.security_scanning and time.time() % self.security_check_interval < 5:
-                security_events = await self._perform_security_scan()
-                events.extend(security_events)
+            # ✅ FIXED: Limit total events per collection cycle
+            if len(events) > 5:
+                self.logger.warning(f"⚠️ Limiting events from {len(events)} to 5")
+                events = events[:5]
             
             self.stats['total_system_events'] += len(events)
             return events
@@ -486,22 +498,35 @@ class LinuxSystemCollector(LinuxBaseCollector):
             self.logger.error(f"❌ Service removal handling failed: {e}")
     
     async def _monitor_system_events(self):
-        """Monitor system events and return events"""
+        """✅ FIXED: Monitor system events with aggressive filtering"""
         events = []
         try:
             system_events = await self._get_system_events()
             
+            # ✅ FIXED: Limit events per monitoring cycle
+            max_events = 3
+            event_count = 0
+            
             for event in system_events:
+                if event_count >= max_events:
+                    break
+                    
+                # ✅ FIXED: Skip common spam events
+                if self._should_skip_event(event):
+                    continue
+                
                 if self._is_security_event(event):
                     security_event = await self._create_security_event(event)
                     if security_event:
                         events.append(security_event)
                         self.stats['security_events'] += 1
+                        event_count += 1
                 else:
                     system_event = await self._create_system_event(event)
                     if system_event:
                         events.append(system_event)
                         self.stats['system_events'] += 1
+                        event_count += 1
             
             return events
             
@@ -1069,6 +1094,37 @@ class LinuxSystemCollector(LinuxBaseCollector):
         elif event_type == 'network' and self.exclude_network_events:
             return True
         elif event_type == 'service' and self.exclude_service_events:
+            return True
+        
+        return False
+
+    def _should_skip_event(self, event: SystemEvent) -> bool:
+        """✅ FIXED: Check if event should be skipped to prevent spam"""
+        # Skip common spam sources
+        spam_sources = [
+            'systemd', 'dbus', 'NetworkManager', 'pulseaudio',
+            'avahi', 'cups', 'bluetooth', 'wpa_supplicant',
+            'systemd-logind', 'systemd-resolved', 'systemd-timesyncd'
+        ]
+        
+        # Skip if source is in spam list
+        if any(spam in event.source.lower() for spam in spam_sources):
+            return True
+        
+        # Skip common spam messages
+        spam_messages = [
+            'started', 'stopped', 'reloaded', 'restarted',
+            'connection', 'disconnection', 'timeout',
+            'heartbeat', 'ping', 'pong', 'keepalive',
+            'cache', 'temp', 'tmp', 'log', 'debug'
+        ]
+        
+        message_lower = event.message.lower()
+        if any(spam in message_lower for spam in spam_messages):
+            return True
+        
+        # Skip low priority events
+        if event.severity in ['debug', 'info']:
             return True
         
         return False

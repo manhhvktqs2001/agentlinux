@@ -1,225 +1,137 @@
-# ✅ OPTIMIZED: Linux EDR Agent Configuration
-# Enhanced for stability, performance, and reduced event spam
+# ✅ FIXED: Linux EDR Agent Configuration
+# Optimized for connection stability and proper operation
 
 agent:
   # Agent identification
   agent_id: null  # Will be auto-generated
-  agent_name: "Linux EDR Agent - Optimized"
-  agent_version: "2.1.0-Linux-Enhanced-Realtime"
+  agent_name: "Linux EDR Agent - ALL LOGS CONTINUOUS"
+  agent_version: "2.1.0-Linux-ALL-LOGS"
   
-  # ✅ OPTIMIZATION: Reduced event processing to prevent spam
-  event_batch_size: 5         # Reduced from 10 to 5
-  event_queue_size: 250       # Reduced from 500 to 250
-  individual_threshold: 2     # Reduced from 3 to 2
-  disable_batch_submission: true
-  test_event_submission: false
+  # ✅ ALL LOGS CONTINUOUS: Immediate event submission
+  event_batch_size: 1         # Force individual events
+  event_queue_size: 2000      # Larger queue for all logs
+  individual_threshold: 1     # Always submit individually
+  disable_batch_submission: true  # Use individual submission only
   
-  # ✅ OPTIMIZATION: Minimal workers for stability
-  num_workers: 1
-  num_batch_processors: 1
+  # ✅ ALL LOGS CONTINUOUS: More workers for all data types
+  num_workers: 15             # More workers for all logs processing
+  num_batch_processors: 2     # More batch processors
   
-  # ✅ OPTIMIZATION: Significantly increased intervals to reduce load
-  process_collection_interval: 45    # Increased from 30 to 45 seconds
-  file_collection_interval: 600      # Increased to 10 minutes
-  network_collection_interval: 180   # Increased from 90 to 180 seconds (3 minutes)
-  system_collection_interval: 300    # Increased from 180 to 300 seconds (5 minutes)
-  authentication_collection_interval: 300  # Increased to 5 minutes
+  # ✅ ALL LOGS CONTINUOUS: Very fast intervals
+  heartbeat_interval: 30      # 30 seconds between heartbeats
+  system_monitor_interval: 60 # 1 minute between system checks
   
-  # ✅ OPTIMIZATION: Extended monitoring intervals
-  heartbeat_interval: 90             # Increased to 1.5 minutes
-  system_monitor_interval: 300       # Increased to 5 minutes
-  performance_monitor_interval: 120   # New: 2 minutes
-  health_monitor_interval: 60        # New: 1 minute
-  
-  # ✅ OPTIMIZATION: Conservative resource thresholds
-  memory_threshold: 70  # Reduced from 80
-  cpu_threshold: 80     # Reduced from 90
+  # ✅ ALL LOGS CONTINUOUS: Conservative resource thresholds
+  memory_threshold: 70
+  cpu_threshold: 80
   debug_mode: false
-
-  # ✅ STRATEGIC: Selective collector enabling
-  enable_process_collector: true    # Keep essential process monitoring
-  enable_file_collector: false     # DISABLED - major spam source
-  enable_network_collector: true   # Keep network monitoring
-  enable_system_collector: true    # Keep system monitoring
-  enable_authentication_collector: true  # Keep security monitoring
-
-  # Log monitoring configuration
-  enable_realtime_logs: true
-  log_batch_size: 10
-  log_sending_interval: 5  # Send logs every 5 seconds
-  enable_thread_logs: true
-  enable_file_monitoring: true
   
-  # 🚀 NEW: Realtime logging configuration
-  realtime_logging:
-    enabled: true
-    batch_size: 5
-    batch_timeout: 1.0  # 1 second
-    max_logs_per_second: 50
-    num_workers: 3
-    enable_thread_tracking: true
-    enable_file_monitoring: true
-    enable_urgent_logs: true
+  # ✅ ALL LOGS CONTINUOUS: Enable ALL collectors
+  enable_process_collector: true     # Process monitoring
+  enable_file_collector: true        # File monitoring
+  enable_network_collector: true     # Network monitoring
+  enable_system_collector: true      # System monitoring
+  enable_authentication_collector: true  # Authentication monitoring
   
-  # Thread log monitoring
-  thread_log_monitoring:
-    enabled: true
-    track_collector_threads: true
-    track_processor_threads: true
-    track_communication_threads: true
-    thread_check_interval: 30  # Check every 30 seconds
-  
-  # Log file monitoring
-  monitored_log_files:
-    - path: "/var/log/auth.log"
-      type: "authentication"
-      enabled: true
-      category: "security"
-      priority: "high"
-      stream_immediately: true
-    - path: "/var/log/syslog"
-      type: "system"
-      enabled: true
-      category: "system"
-      priority: "medium"
-      stream_immediately: false
-    - path: "/var/log/kern.log"
-      type: "kernel"
-      enabled: true
-      category: "system"
-      priority: "medium"
-      stream_immediately: false
-    - path: "/var/log/dmesg"
-      type: "kernel"
-      enabled: false  # Can be very noisy
-      category: "system"
-      priority: "low"
-      stream_immediately: false
-    - path: "/var/log/btmp"
-      type: "authentication"
-      enabled: true
-      category: "security"
-      priority: "high"
-      stream_immediately: true
-    - path: "/var/log/wtmp"
-      type: "authentication"
-      enabled: true
-      category: "security"
-      priority: "medium"
-      stream_immediately: false
-    - path: "/var/log/faillog"
-      type: "authentication"
-      enabled: true
-      category: "security"
-      priority: "high"
-      stream_immediately: true
+  # ✅ ALL LOGS CONTINUOUS: Realtime logging (optimized)
+  enable_realtime_logs: false      # DISABLED - no logs endpoint
+  log_batch_size: 1               # Individual log sending
+  log_sending_interval: 1         # Send logs immediately
 
+# ✅ FIXED: Server configuration with proper timeouts
 server:
   host: '192.168.20.85'
   port: 5000
   auth_token: 'edr_agent_auth_2024'
-  timeout: 45                    # Increased timeout
-  max_retries: 5                 # Increased retries
-  retry_delay: 10                # Increased retry delay
-  connection_pool_size: 5        # Connection pooling
-  keep_alive: true               # Keep connections alive
+  timeout: 5                 # Short timeout to fail fast
+  max_retries: 2             # Fewer retries
+  retry_delay: 3             # Shorter retry delay
+  connection_pool_size: 2    # Small connection pool
+  keep_alive: false          # Disable keep-alive for stability
 
-# ✅ OPTIMIZATION: Reduced collection scope
+# ✅ FIXED: Minimal collection scope
 collection:
   enabled: true
   
-  # ✅ STRATEGIC: Disable high-volume collectors
+  # ✅ ALL LOGS CONTINUOUS: Enable ALL collectors
   collect_processes: true
-  collect_files: false           # DISABLED - major spam source
-  collect_network: true
-  collect_authentication: true
-  collect_system_events: true
+  collect_files: true            # ENABLED - File monitoring
+  collect_network: true         # ENABLED - Network monitoring
+  collect_authentication: true  # ENABLED - Authentication monitoring
+  collect_system_events: true   # ENABLED - System monitoring
   
-  # ✅ OPTIMIZATION: Increased polling intervals
-  polling_interval: 60           # Increased from 30 to 60 seconds
-  max_events_per_collection: 5   # Limit events per collection cycle
+  # ✅ ALL LOGS CONTINUOUS: Very fast polling intervals
+  polling_interval: 5           # 5 seconds between collections (very fast)
+  max_events_per_collection: 10 # More events per collection cycle
   
-  # ✅ NEW: Smart filtering
-  enable_event_filtering: true
-  enable_deduplication: true
-  deduplication_window: 300      # 5 minutes
+  # ✅ ALL LOGS CONTINUOUS: Smart filtering
+  enable_event_filtering: false  # DISABLED for all logs
+  enable_deduplication: false    # DISABLED for continuous streaming
+  deduplication_window: 0        # No deduplication for realtime
 
-# ✅ OPTIMIZATION: Minimal Linux-specific monitoring
+# ✅ ALL LOGS CONTINUOUS: Enable all Linux-specific monitoring
 linux_specific:
-  monitor_proc_filesystem: false  # DISABLED - can cause spam
-  use_inotify: false             # DISABLED - major spam source
-  monitor_systemd: true          # Keep essential service monitoring
-  monitor_audit_daemon: false    # DISABLED - can be noisy
+  monitor_proc_filesystem: true   # ENABLED - Proc monitoring
+  use_inotify: true              # ENABLED - File change monitoring
+  monitor_systemd: true          # ENABLED - Systemd monitoring
+  monitor_audit_daemon: true     # ENABLED - Audit monitoring
   
-  # ✅ NEW: System event filtering
-  system_event_filters:
-    exclude_security_events: false  # Keep security events but reduce frequency
-    exclude_performance_events: true  # Disable performance events
-    exclude_network_events: false   # Keep network events
-    exclude_service_events: false   # Keep service events
-  
-  # ✅ NEW: Network event filtering
-  network_event_filters:
-    exclude_disconnect_events: true  # Disable disconnect events (major spam source)
-    exclude_connect_events: false    # Keep connect events
-    exclude_listen_events: false     # Keep listen events
-    exclude_established_events: true # Disable established events (spam)
-  
-  # ✅ OPTIMIZATION: Minimal path monitoring
-  paths_to_monitor: []           # Empty - no file monitoring
+  # ✅ ALL LOGS CONTINUOUS: Monitor all paths
+  paths_to_monitor: [
+    '/etc',
+    '/var/log',
+    '/home',
+    '/root',
+    '/tmp',
+    '/var/tmp',
+    '/usr/bin',
+    '/usr/sbin',
+    '/bin',
+    '/sbin'
+  ]
   exclude_paths:
     - '/proc'
     - '/sys'
     - '/dev'
-    - '/tmp'
-    - '/var/tmp'
-    - '/var/log'
   
-  # ✅ OPTIMIZATION: Process filtering
-  exclude_kernel_threads: true
-  exclude_short_lived_processes: true
-  min_process_lifetime: 10       # Only monitor processes > 10 seconds
+  # ✅ ALL LOGS CONTINUOUS: Reduced filtering for more events
+  exclude_kernel_threads: false
+  exclude_short_lived_processes: false
+  min_process_lifetime: 1        # Monitor all processes (1 second)
 
-# ✅ OPTIMIZATION: Conservative logging
+# ✅ FIXED: Conservative logging
 logging:
-  level: 'INFO'                  # Keep INFO level
+  level: 'INFO'
   console_enabled: true
   file_enabled: true
   log_directory: './logs'
-  
-  # ✅ NEW: Log rotation settings
-  max_log_size: '50MB'          # Increased log size
-  backup_count: 3               # Fewer backup files
-  log_compression: true         # Compress old logs
+  max_log_size: '10MB'
+  backup_count: 2
+  log_compression: true
 
-# ✅ OPTIMIZATION: Enhanced performance settings
+# ✅ FIXED: Conservative performance settings
 performance:
-  max_cpu_usage: 20             # Reduced CPU limit
-  max_memory_usage: 200         # Reduced memory limit (200MB)
+  max_cpu_usage: 15             # Very low CPU limit
+  max_memory_usage: 128         # Very low memory limit (128MB)
   auto_throttle: true
-  throttle_threshold: 15        # Start throttling at 15% CPU
+  throttle_threshold: 10        # Start throttling at 10% CPU
   
-  # ✅ NEW: Resource monitoring
+  # ✅ FIXED: Resource monitoring
   monitor_resource_usage: true
-  resource_check_interval: 30
-  emergency_shutdown_threshold: 95  # Emergency stop at 95% resource usage
-  
-  # ✅ NEW: Collector management
-  restart_failed_collectors: true
-  max_collector_restarts: 3
-  collector_restart_delay: 60
+  resource_check_interval: 60
+  emergency_shutdown_threshold: 90  # Emergency stop at 90% resource usage
 
-# ✅ OPTIMIZATION: Aggressive event filtering
+# ✅ FIXED: Aggressive event filtering
 filters:
   exclude_system_processes: true
   exclude_kernel_threads: true
   exclude_short_lived_processes: true
   exclude_agent_activity: true
   
-  # ✅ OPTIMIZATION: Extended process exclusions
+  # ✅ FIXED: Extended exclusions
   exclude_process_names:
     - 'kthreadd'
-    - 'ksoftirqd'
+    - 'ksoftirqd' 
     - 'migration'
     - 'rcu_'
     - 'watchdog'
@@ -229,15 +141,23 @@ filters:
     - 'pulseaudio'
     - 'gnome-'
     - 'kde-'
+    - 'firefox'
+    - 'chrome'
+    - 'chromium'
+    - 'python'
+    - 'node'
+    - 'java'
   
-  # ✅ OPTIMIZATION: Path exclusions
+  # ✅ FIXED: Path exclusions
   exclude_process_paths:
     - '/lib/systemd'
     - '/usr/lib/systemd'
     - '/usr/bin/dbus'
     - '/usr/sbin'
+    - '/usr/bin'
+    - '/usr/local/bin'
   
-  # ✅ OPTIMIZATION: File filtering
+  # ✅ FIXED: File filtering
   exclude_file_extensions:
     - '.tmp'
     - '.log'
@@ -246,6 +166,8 @@ filters:
     - '.lock'
     - '.swp'
     - '.bak'
+    - '.old'
+    - '.backup'
   
   exclude_file_paths:
     - '/tmp'
@@ -255,54 +177,44 @@ filters:
     - '/proc'
     - '/sys'
     - '/dev'
+    - '/home'
+    - '/root'
   
-  # ✅ OPTIMIZATION: Size and complexity limits
-  min_process_lifetime: 10      # Increased from 5 to 10 seconds
-  max_file_size_mb: 50         # Reduced from 100 to 50MB
-  max_command_line_length: 1024 # Reduced from 2048
-  max_events_per_minute: 10     # Reduced from 15 to 10 (strict limit)
+  # ✅ ALL LOGS CONTINUOUS: Size and complexity limits
+  min_process_lifetime: 1        # Monitor all processes (1 second)
+  max_file_size_mb: 100         # Larger file size limit
+  max_command_line_length: 1024 # Increased command line length
+  max_events_per_minute: 500    # Much higher event limit for all logs
   
-  # ✅ NEW: Event type limits
-  max_security_events_per_minute: 2   # Limit security events
-  max_network_events_per_minute: 3    # Limit network events
-  max_process_events_per_minute: 5    # Limit process events
+  # ✅ ALL LOGS CONTINUOUS: Event type limits - HIGH for continuous logging
+  max_security_events_per_minute: 200   # High security events
+  max_network_events_per_minute: 200    # High network events
+  max_process_events_per_minute: 200    # High process events
+  max_file_events_per_minute: 200       # High file events
+  max_system_events_per_minute: 200     # High system events
   
-  # ✅ NEW: Smart filtering rules
-  ignore_repeated_events: true
-  repeated_event_threshold: 2   # Reduced from 3 to 2 (ignore after 2 identical events)
-  repeated_event_window: 180    # Reduced from 300 to 180 seconds (3 minutes)
+  # ✅ ALL LOGS CONTINUOUS: Smart filtering rules
+  ignore_repeated_events: false
+  repeated_event_threshold: 1   # No repeated event filtering
 
-# ✅ NEW: Health monitoring configuration
-health_monitoring:
-  enabled: true
-  check_interval: 60           # Check every minute
-  restart_unhealthy_components: true
-  max_restart_attempts: 3
+# ✅ FIXED: Health monitoring
+health:
+  enable_health_checks: true
+  health_check_interval: 60     # Check every minute
+  enable_collector_health: true
+  enable_communication_health: true
+  enable_system_health: true
   
-  # Component health thresholds
-  communication_timeout: 30
-  event_processor_max_queue: 200
-  collector_max_errors: 10
+  # ✅ FIXED: Health thresholds
+  max_consecutive_failures: 3
+  health_check_timeout: 5
+  auto_restart_failed_collectors: false  # Don't restart to avoid loops
 
-# ✅ NEW: Auto-optimization settings
-auto_optimization:
-  enabled: true
-  adjustment_interval: 600     # Adjust every 10 minutes
-  
-  # Dynamic adjustment thresholds
-  high_load_threshold: 80      # CPU percentage
-  low_memory_threshold: 100    # MB available
-  
-  # Auto-adjustments
-  reduce_collection_frequency: true
-  disable_non_essential_collectors: true
-  increase_batch_intervals: true
-
-# ✅ NEW: Emergency settings
+# ✅ FIXED: Emergency settings
 emergency:
   enabled: true
-  cpu_emergency_threshold: 95
-  memory_emergency_threshold: 95
+  cpu_emergency_threshold: 90
+  memory_emergency_threshold: 90
   
   # Emergency actions
   pause_all_collectors: true
@@ -311,190 +223,65 @@ emergency:
   
   # Recovery settings
   recovery_check_interval: 300  # 5 minutes
-  auto_recovery_threshold: 70   # Resume when < 70% usage
+  auto_recovery_threshold: 60   # Resume when < 60% usage
 
-# ✅ NEW: Maintenance settings
+# ✅ FIXED: Maintenance settings
 maintenance:
   enabled: true
   
   # Automatic cleanup
-  cleanup_interval: 3600       # Every hour
+  cleanup_interval: 1800       # Every 30 minutes
   cleanup_old_logs: true
   cleanup_old_events: true
-  max_log_age_days: 7
+  max_log_age_days: 3          # Keep logs for only 3 days
   
   # Performance optimization
-  optimize_database: true
-  compress_old_data: true
-  vacuum_interval: 86400       # Daily
+  optimize_database: false     # Disabled to avoid issues
+  compress_old_data: false     # Disabled to avoid issues
+  vacuum_interval: 0           # Disabled
 
-# ✅ NEW: Notification settings for administrators
+# ✅ FIXED: Notification settings
 notifications:
-  enabled: true
+  enabled: false               # Disabled to reduce overhead
   
   # Performance alerts
-  alert_on_high_cpu: true
-  alert_on_high_memory: true
-  alert_on_collector_failure: true
-  
-  # Alert thresholds
-  cpu_alert_threshold: 80
-  memory_alert_threshold: 85
-  
-  # Alert methods
-  log_alerts: true
-  console_alerts: true
+  alert_on_high_cpu: false
+  alert_on_high_memory: false
+  alert_on_collector_failure: false
 
-# Linux EDR Agent Configuration - OPTIMIZED VERSION
-# Enhanced stability, performance monitoring, and spam reduction
-
-agent:
-  # Agent identification
-  agent_id: null  # Will be auto-generated if not set
-  agent_name: "Linux-EDR-Agent"
-  agent_version: "2.1.0-Linux-Enhanced-Realtime"
-  
-  # Performance settings
-  num_workers: 2
-  num_batch_processors: 1
-  batch_size: 10
-  batch_timeout: 5
-  individual_threshold: 5  # Use individual submission for small batches
-  disable_batch_submission: true  # Force individual submission for better reliability
-  
-  # Collection intervals (optimized to reduce spam)
-  process_collection_interval: 30  # Increased from 10s to 30s
-  network_collection_interval: 60  # Increased from 30s to 60s
-  system_collection_interval: 120  # Increased from 60s to 120s
-  authentication_collection_interval: 30
-  file_collection_interval: 300  # Increased from 120s to 300s
-  
-  # Collector enablement
-  enable_process_collector: true
-  enable_network_collector: true
-  enable_authentication_collector: true
-  enable_system_collector: true
-  enable_file_collector: false  # Disabled to reduce spam
-  
-  # Event filtering and rate limiting
-  enable_event_filtering: true
-  enable_rate_limiting: true
-  max_events_per_minute: 100
-  deduplication_window: 300  # 5 minutes
-  
-  # Log monitoring configuration
-  enable_realtime_logs: true
-  log_batch_size: 10
-  log_sending_interval: 5  # Send logs every 5 seconds
-  enable_thread_logs: true
-  enable_file_monitoring: true
-  
-  # 🚀 NEW: Realtime logging configuration
-  realtime_logging:
-    enabled: true
-    batch_size: 5
-    batch_timeout: 1.0  # 1 second
-    max_logs_per_second: 50
-    num_workers: 3
-    enable_thread_tracking: true
-    enable_file_monitoring: true
-    enable_urgent_logs: true
-    
-  # Thread log monitoring
-  thread_log_monitoring:
-    enabled: true
-    track_collector_threads: true
-    track_processor_threads: true
-    track_communication_threads: true
-    thread_check_interval: 30  # Check every 30 seconds
-  
-  # Log file monitoring
-  monitored_log_files:
-    - path: "/var/log/auth.log"
-      type: "authentication"
-      enabled: true
-      category: "security"
-      priority: "high"
-      stream_immediately: true
-    - path: "/var/log/syslog"
-      type: "system"
-      enabled: true
-      category: "system"
-      priority: "medium"
-      stream_immediately: false
-    - path: "/var/log/kern.log"
-      type: "kernel"
-      enabled: true
-      category: "system"
-      priority: "medium"
-      stream_immediately: false
-    - path: "/var/log/dmesg"
-      type: "kernel"
-      enabled: false  # Can be very noisy
-      category: "system"
-      priority: "low"
-      stream_immediately: false
-    - path: "/var/log/btmp"
-      type: "authentication"
-      enabled: true
-      category: "security"
-      priority: "high"
-      stream_immediately: true
-    - path: "/var/log/wtmp"
-      type: "authentication"
-      enabled: true
-      category: "security"
-      priority: "medium"
-      stream_immediately: false
-    - path: "/var/log/faillog"
-      type: "authentication"
-      enabled: true
-      category: "security"
-      priority: "high"
-      stream_immediately: true
-
-logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: "logs/agent.log"
-  max_size: "10MB"
-  backup_count: 5
-  enable_console: true
-  enable_file: true
-  
-  # Thread-specific logging
-  enable_thread_logging: true
-  thread_log_format: "%(asctime)s - %(threadName)s - %(levelname)s - %(message)s"
-
-# Event processing optimization
-event_processing:
-  enable_parallel_processing: true
-  max_queue_size: 1000
-  worker_timeout: 30
-  enable_event_validation: true
-  enable_event_deduplication: true
-  deduplication_timeout: 300  # 5 minutes
-
-# Security settings
+# ✅ FIXED: Security settings
 security:
-  enable_encryption: false  # Disabled for local development
-  enable_anti_tamper: false  # Disabled for local development
-  enable_audit_logging: true
+  enable_encryption: false     # Disabled for stability
+  enable_anti_tamper: false    # Disabled for stability
+  enable_audit_logging: false  # Disabled to reduce overhead
   audit_log_file: "logs/audit.log"
 
-# Performance monitoring
-performance:
-  enable_monitoring: true
-  monitoring_interval: 60
-  enable_memory_tracking: true
-  enable_cpu_tracking: true
-  enable_disk_tracking: true
-  enable_network_tracking: true
+# ✅ FIXED: Event processing optimization
+event_processing:
+  enable_parallel_processing: false  # Disabled for stability
+  max_queue_size: 50           # Very small queue
+  worker_timeout: 10           # Short timeout
+  enable_event_validation: true
+  enable_event_deduplication: true
+  deduplication_timeout: 600   # 10 minutes
 
-# Health monitoring
-health:
-  enable_health_checks: true
-  health_check_interval: 30
-  enable_collector_health: true
-  enable_communication_health: true
-  enable_system_health: true
+# ✅ FIXED: Thread-specific logging
+thread_log_monitoring:
+  enabled: false               # Disabled to reduce overhead
+  track_collector_threads: false
+  track_processor_threads: false
+  track_communication_threads: false
+
+# ✅ FIXED: Log file monitoring
+monitored_log_files: []        # Empty - no log file monitoring
+
+# ✅ FIXED: Realtime logging configuration
+realtime_logging:
+  enabled: true
+  batch_size: 3               # Very small batch
+  batch_timeout: 2.0          # 2 seconds
+  max_logs_per_second: 10     # Very low rate
+  num_workers: 1              # Single worker
+  enable_thread_tracking: false
+  enable_file_monitoring: false
+  enable_urgent_logs: false

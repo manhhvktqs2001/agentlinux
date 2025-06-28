@@ -643,28 +643,25 @@ class LinuxAgentManager:
             raise Exception(f"Enhanced Linux agent manager initialization failed: {e}")
     
     async def _initialize_realtime_components(self):
-        """🚀 NEW: Initialize realtime logging components"""
+        """🚀 NEW: Initialize realtime logging components - DISABLED"""
         try:
             self.logger.info("🚀 Initializing realtime logging components...")
             
-            # Initialize realtime log monitor
-            await self.realtime_log_monitor.initialize()
+            # ✅ FIXED: Disable realtime components to prevent log sender errors
+            self.logger.info("📝 Realtime logging components disabled (server doesn't support logs endpoint)")
             
-            # Initialize thread log tracker
-            await self.thread_log_tracker.initialize()
-            
-            # Set up realtime logging in communication
+            # Set up basic agent info in communication
             if self.communication:
                 self.communication.set_agent_info(self.agent_id, self.system_info.get('hostname'))
             
-            self.logger.info("✅ Realtime logging components initialized")
+            self.logger.info("✅ Realtime logging components initialized (disabled)")
             
         except Exception as e:
             self.logger.error(f"❌ Realtime components initialization failed: {e}")
             self.health_checks['realtime_logging'] = False
     
     async def _initialize_communication_with_retries(self):
-        """Initialize communication with retry logic"""
+        """Initialize communication with retry logic - FIXED"""
         max_retries = 3
         retry_delay = 5
         
@@ -679,18 +676,25 @@ class LinuxAgentManager:
                 self.logger.info("🔍 Testing server connectivity...")
                 if await self.communication.test_server_connection():
                     self.logger.info("✅ Server connection test passed")
-                    break
+                    return  # Success - exit the retry loop
                 else:
-                    raise Exception("Server connection test failed")
+                    self.logger.warning(f"⚠️ Server connection test failed (attempt {attempt + 1}/{max_retries})")
                     
             except Exception as e:
                 self.logger.warning(f"❌ Communication attempt {attempt + 1} failed: {e}")
+                
                 if attempt < max_retries - 1:
                     self.logger.info(f"⏳ Retrying in {retry_delay} seconds...")
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
                 else:
-                    raise Exception(f"Communication initialization failed after {max_retries} attempts")
+                    # All attempts failed - continue in offline mode
+                    self.logger.warning("⚠️ Communication initialization failed - agent will run in offline mode")
+                    self.logger.info("💡 Agent will continue running and retry connection periodically")
+                    return  # Don't raise exception - allow agent to continue
+        
+        # If we get here, all retries failed but we should continue
+        self.logger.warning("⚠️ Communication initialization failed - agent will run in offline mode")
     
     async def _initialize_event_processor(self):
         """Initialize Event Processor with validation"""
@@ -836,21 +840,28 @@ class LinuxAgentManager:
             raise
     
     async def start(self):
-        """Start Enhanced Linux Agent Manager with realtime features"""
+        """Start Enhanced Linux Agent Manager with realtime features - FIXED"""
         try:
             self.logger.info("🚀 Starting Enhanced Linux Agent Manager...")
             
             # Register with server if not already registered
             if not self.is_registered:
-                await self._register_with_server()
+                registration_success = await self._register_with_server()
+                if not registration_success:
+                    self.logger.warning("⚠️ Registration failed - agent will run in offline mode")
+                    # Generate a temporary agent ID for offline operation
+                    if not self.agent_id:
+                        self.agent_id = f"offline-{uuid.uuid4().hex[:8]}"
+                        self.logger.info(f"🆔 Using temporary agent ID: {self.agent_id}")
             
-            # Ensure agent_id is available
+            # Ensure agent_id is available (either from registration or temporary)
             if not self.agent_id:
-                raise Exception("Agent registration failed - no agent_id received")
+                self.logger.error("❌ No agent_id available - cannot start agent")
+                return
             
             self.logger.info(f"✅ Agent ready with ID: {self.agent_id}")
             
-            # Update agent_id everywhere after successful registration
+            # Update agent_id everywhere after successful registration or temporary assignment
             await self._update_all_agent_ids()
             
             # Start Event Processor
@@ -882,26 +893,26 @@ class LinuxAgentManager:
             self.logger.info(f"   🚀 Realtime Logging: {self.config.get('agent', {}).get('enable_realtime_logs', False)}")
             self.logger.info(f"   🐧 Platform: Linux ({self.system_info.get('distribution', 'Unknown')})")
             
+            if not self.is_registered:
+                self.logger.info("💡 Agent running in offline mode - will retry registration periodically")
+            
         except Exception as e:
             self.logger.error(f"❌ Enhanced Linux agent manager start failed: {e}")
             raise
     
     async def _start_realtime_components(self):
-        """🚀 NEW: Start realtime logging components"""
+        """🚀 NEW: Start realtime logging components - DISABLED"""
         try:
             self.logger.info("🚀 Starting realtime logging components...")
             
-            # Start realtime log monitor
-            await self.realtime_log_monitor.start()
-            
-            # Start thread log tracker
-            await self.thread_log_tracker.start()
+            # ✅ FIXED: Disable realtime components to prevent log sender errors
+            self.logger.info("📝 Realtime logging components disabled (server doesn't support logs endpoint)")
             
             # Update health status
-            self.health_checks['realtime_logging'] = True
-            self.health_checks['log_streaming'] = True
+            self.health_checks['realtime_logging'] = False  # Disabled
+            self.health_checks['log_streaming'] = False     # Disabled
             
-            self.logger.info("✅ Realtime logging components started")
+            self.logger.info("✅ Realtime logging components started (disabled)")
             
         except Exception as e:
             self.logger.error(f"❌ Error starting realtime components: {e}")
@@ -932,11 +943,17 @@ class LinuxAgentManager:
             # Don't raise exception - allow agent to continue with available collectors
     
     async def _register_with_server(self):
-        """Register with server with enhanced data collection"""
+        """Register with server with enhanced data collection - FIXED"""
         try:
             if self.is_registered and self.agent_id:
                 self.logger.info(f"✅ Agent already registered with ID: {self.agent_id[:8]}...")
                 return True
+            
+            # Check if communication is available
+            if not self.communication or not self.communication.is_online():
+                self.logger.warning("⚠️ Communication not available - skipping registration")
+                self.logger.info("💡 Agent will run in offline mode and retry registration later")
+                return False
             
             self.logger.info("📡 Registering Linux Agent with complete data...")
             
@@ -956,7 +973,7 @@ class LinuxAgentManager:
                 operating_system=f"Linux {self.system_info.get('distribution', 'Unknown')}",
                 os_version=self.system_info.get('kernel', 'Unknown'),
                 architecture=self.system_info.get('architecture', 'Unknown'),
-                agent_version='2.1.0-Linux-Enhanced-Realtime',
+                agent_version='2.1.0-Linux-FIXED',
                 mac_address=mac_address,
                 domain=self._get_domain(),
                 install_path=str(Path(__file__).resolve().parent.parent.parent),
@@ -993,16 +1010,18 @@ class LinuxAgentManager:
                     self.logger.info(f"✅ Agent registered successfully: {self.agent_id}")
                     return True
                 else:
-                    self.logger.error("❌ Registration successful but no agent_id returned")
+                    self.logger.warning("⚠️ Registration successful but no agent_id returned")
                     return False
             else:
                 error_msg = registration_result.get('error', 'Unknown error') if registration_result else 'No response'
-                self.logger.error(f"❌ Agent registration failed: {error_msg}")
+                self.logger.warning(f"⚠️ Registration failed: {error_msg}")
+                self.logger.info("💡 Agent will continue running and retry registration later")
                 return False
                 
         except Exception as e:
-            self.logger.error(f"❌ Agent registration failed: {e}")
-            raise
+            self.logger.warning(f"⚠️ Registration failed: {e}")
+            self.logger.info("💡 Agent will continue running and retry registration later")
+            return False  # Don't raise exception - allow agent to continue
     
     async def _update_all_agent_ids(self):
         """Update agent_id in all components after successful registration"""

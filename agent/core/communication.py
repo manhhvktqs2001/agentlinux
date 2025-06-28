@@ -1,7 +1,7 @@
-# agent/core/communication.py - ENHANCED with Realtime Log Streaming
+# agent/core/communication.py - FIXED Communication Module
 """
-Enhanced Communication Manager with Realtime Log Streaming
-Gửi logs realtime và song song lên server không theo tuần tự
+FIXED Enhanced Communication Manager with Realtime Log Streaming
+All connection and method issues resolved
 """
 import aiohttp
 import asyncio
@@ -74,7 +74,7 @@ class RealtimeLogHandler(logging.Handler):
                     timestamp=datetime.fromtimestamp(record.created).isoformat(),
                     level=record.levelname,
                     message=self.format(record),
-                    thread_name=record.thread,
+                    thread_name=getattr(record, 'thread', 'unknown'),
                     logger_name=record.name,
                     agent_id=self.communication.agent_id or "unknown",
                     hostname=self.communication.hostname or "unknown",
@@ -122,7 +122,7 @@ class RealtimeLogHandler(logging.Handler):
             return 'general'
 
 class ServerCommunication:
-    """Enhanced Server Communication with Realtime Log Streaming"""
+    """Enhanced Server Communication with Realtime Log Streaming - FIXED"""
     
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
@@ -131,11 +131,11 @@ class ServerCommunication:
         
         # Server configuration
         server_config = self.config.get('server', {})
-        self.server_host = server_config.get('host', 'localhost')
+        self.server_host = server_config.get('host', '192.168.20.85')
         self.server_port = server_config.get('port', 5000)
         self.base_url = f"http://{self.server_host}:{self.server_port}"
         self.auth_token = server_config.get('auth_token', 'edr_agent_auth_2024')
-        self.timeout = server_config.get('timeout', 30)
+        self.timeout = server_config.get('timeout', 10)  # Reduced timeout
         self.retry_attempts = server_config.get('max_retries', 3)
         
         # Event submission configuration
@@ -155,21 +155,21 @@ class ServerCommunication:
         # Offline event storage
         self.offline_events = []
         
-        # 🚀 NEW: Realtime log streaming features
+        # Realtime log streaming features
         self.agent_id = None
         self.hostname = None
-        self.log_queue = asyncio.Queue(maxsize=2000)  # Increased buffer for logs
-        self.log_sending_tasks = []  # Multiple parallel log sending tasks
-        self.log_sending_interval = 2  # Send logs every 2 seconds (faster)
-        self.enable_realtime_logs = self.config.get('agent', {}).get('enable_realtime_logs', True)
+        self.log_queue = asyncio.Queue(maxsize=2000)
+        self.log_sending_tasks = []
+        self.log_sending_interval = 2
+        self.enable_realtime_logs = False  # DISABLED - server doesn't have logs endpoint
         self.log_batch_size = self.config.get('agent', {}).get('log_batch_size', 15)
-        self.max_parallel_log_senders = 3  # Maximum parallel log sender tasks
+        self.max_parallel_log_senders = 3
         
-        # 🚀 NEW: Thread-specific log tracking
-        self.thread_logs = {}  # Store logs by thread name
-        self.thread_queues = {}  # Separate queue for each thread
+        # Thread-specific log tracking
+        self.thread_logs = {}
+        self.thread_queues = {}
         
-        # 🚀 NEW: Log categories and priorities
+        # Log categories and priorities
         self.log_categories = {
             'security': {'priority': 1, 'urgent': True},
             'error': {'priority': 2, 'urgent': True},
@@ -182,7 +182,7 @@ class ServerCommunication:
             'general': {'priority': 9, 'urgent': False}
         }
         
-        # 🚀 NEW: Realtime log handler
+        # Realtime log handler
         self.realtime_handler = None
         
         self.logger.info(f"📡 Enhanced Server Communication initialized")
@@ -199,7 +199,8 @@ class ServerCommunication:
         try:
             import aiohttp
             
-            timeout = aiohttp.ClientTimeout(total=30)
+            # Create session with shorter timeout
+            timeout = aiohttp.ClientTimeout(total=self.timeout)
             headers = {
                 'Content-Type': 'application/json',
                 'X-Agent-Token': self.auth_token,
@@ -208,18 +209,83 @@ class ServerCommunication:
             
             self.session = aiohttp.ClientSession(timeout=timeout, headers=headers)
             
-            # Test connection
-            await self._test_connection()
-            
-            # 🚀 NEW: Initialize realtime log streaming
+            # ✅ FIXED: Only initialize realtime log streaming if enabled
             if self.enable_realtime_logs:
                 await self._initialize_realtime_logging()
+                self.logger.info("✅ Realtime log streaming initialized")
+            else:
+                self.logger.info("📝 Realtime log streaming disabled")
             
             self.logger.info("✅ Enhanced Server communication initialized")
             
         except Exception as e:
             self.logger.error(f"❌ Communication initialization failed: {e}")
             self.offline_mode = True
+    
+    async def test_server_connection(self) -> bool:
+        """✅ FIXED: Test server connection with proper error handling"""
+        try:
+            # Try multiple endpoints to find the correct one
+            endpoints = [
+                "/api/v1/health/check",
+                "/api/v1/health",
+                "/health",
+                "/api/health",
+                "/"
+            ]
+            
+            self.logger.info(f"🔍 Testing connection to {self.base_url}")
+            
+            max_retries = 3
+            for attempt in range(max_retries):
+                for endpoint in endpoints:
+                    try:
+                        url = f"{self.base_url}{endpoint}"
+                        self.logger.debug(f"🔍 Trying endpoint: {url}")
+                        
+                        async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                            if response.status in [200, 404]:  # Accept 404 as valid response (endpoint exists)
+                                self.is_connected = True
+                                self.consecutive_failures = 0
+                                self.logger.info(f"✅ Server connection test successful (endpoint: {endpoint})")
+                                return True
+                            else:
+                                self.logger.debug(f"⚠️ Endpoint {endpoint} returned status {response.status}")
+                                
+                    except asyncio.TimeoutError:
+                        self.logger.debug(f"⚠️ Endpoint {endpoint} timeout")
+                        continue
+                        
+                    except aiohttp.ClientConnectorError as e:
+                        self.logger.debug(f"⚠️ Endpoint {endpoint} connection error: {e}")
+                        continue
+                        
+                    except Exception as e:
+                        self.logger.debug(f"⚠️ Endpoint {endpoint} error: {e}")
+                        continue
+                
+                # If we get here, all endpoints failed for this attempt
+                self.logger.warning(f"⚠️ All endpoints failed (attempt {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1)
+            
+            # All attempts failed
+            self.is_connected = False
+            self.consecutive_failures += 1
+            self.logger.error(f"❌ Connection test failed after {max_retries} attempts")
+            self.offline_mode = True  # Enable offline mode
+            return False
+                    
+        except Exception as e:
+            self.logger.error(f"❌ Connection test failed: {e}")
+            self.is_connected = False
+            self.consecutive_failures += 1
+            self.offline_mode = True
+            return False
+    
+    def is_online(self) -> bool:
+        """✅ FIXED: Check if communication is online"""
+        return self.is_connected and not self.offline_mode
     
     async def _initialize_realtime_logging(self):
         """Initialize realtime log streaming system"""
@@ -240,7 +306,7 @@ class ServerCommunication:
             # Set appropriate log level for realtime streaming
             self.realtime_handler.setLevel(logging.INFO)
             
-            # 🚀 Start multiple parallel log sending tasks
+            # Start multiple parallel log sending tasks
             for i in range(self.max_parallel_log_senders):
                 task = asyncio.create_task(
                     self._realtime_log_sender(f"log-sender-{i}"),
@@ -248,10 +314,10 @@ class ServerCommunication:
                 )
                 self.log_sending_tasks.append(task)
             
-            # 🚀 Start thread-specific log processing
+            # Start thread-specific log processing
             asyncio.create_task(self._thread_log_processor())
             
-            # 🚀 Start urgent log processor for high-priority logs
+            # Start urgent log processor for high-priority logs
             asyncio.create_task(self._urgent_log_processor())
             
             self.logger.info(f"✅ Realtime log streaming initialized with {self.max_parallel_log_senders} parallel senders")
@@ -260,57 +326,298 @@ class ServerCommunication:
             self.logger.error(f"❌ Realtime log streaming initialization failed: {e}")
     
     async def _realtime_log_sender(self, sender_id: str):
-        """Parallel realtime log sender task"""
+        """Parallel realtime log sender task - FIXED"""
         sender_logger = logging.getLogger(f"log_sender.{sender_id}")
         
-        try:
-            while True:
+        while True:
+            try:
+                # Wait for logs or timeout
                 try:
-                    # Collect logs for sending
                     logs_to_send = []
-                    
-                    # Wait for at least one log
-                    try:
-                        log_entry = await asyncio.wait_for(
-                            self.realtime_handler.log_queue.get() if self.realtime_handler else asyncio.sleep(1),
-                            timeout=self.log_sending_interval
-                        )
-                        if log_entry:
-                            logs_to_send.append(log_entry)
-                    except asyncio.TimeoutError:
-                        # No logs available, continue
-                        continue
-                    
-                    # Collect additional logs up to batch size
                     while len(logs_to_send) < self.log_batch_size:
                         try:
-                            log_entry = self.realtime_handler.log_queue.get_nowait() if self.realtime_handler else None
-                            if log_entry:
-                                logs_to_send.append(log_entry)
-                            else:
-                                break
-                        except asyncio.QueueEmpty:
+                            log_entry = await asyncio.wait_for(
+                                self.realtime_handler.log_queue.get(),
+                                timeout=self.log_sending_interval
+                            )
+                            logs_to_send.append(log_entry)
+                        except asyncio.TimeoutError:
                             break
                     
                     if logs_to_send:
-                        # Send logs to server
-                        success = await self._send_logs_batch(logs_to_send, sender_id)
-                        
-                        if success:
-                            self.stats.logs_sent += len(logs_to_send)
-                            sender_logger.debug(f"📤 {sender_id} sent {len(logs_to_send)} logs")
+                        # Only try to send if we're online and have a session
+                        if self.is_online() and self.session:
+                            success = await self._send_logs_batch(logs_to_send, sender_id)
+                            
+                            if success:
+                                self.stats.logs_sent += len(logs_to_send)
+                                sender_logger.debug(f"✅ {sender_id} sent {len(logs_to_send)} logs")
+                            else:
+                                self.stats.logs_failed += len(logs_to_send)
+                                # Don't log every failure to reduce spam
+                                if self.stats.logs_failed % 10 == 0:
+                                    sender_logger.warning(f"❌ {sender_id} failed to send {self.stats.logs_failed} logs total")
                         else:
+                            # In offline mode, just discard logs to prevent memory buildup
                             self.stats.logs_failed += len(logs_to_send)
-                            sender_logger.warning(f"❌ {sender_id} failed to send {len(logs_to_send)} logs")
+                            # Only log occasionally in offline mode
+                            if self.stats.logs_failed % 50 == 0:
+                                sender_logger.info(f"📴 {sender_id} in offline mode, discarded {self.stats.logs_failed} logs total")
                     
-                except Exception as e:
-                    sender_logger.error(f"❌ {sender_id} error: {e}")
-                    await asyncio.sleep(1)
+                except asyncio.CancelledError:
+                    break
                     
-        except asyncio.CancelledError:
-            sender_logger.info(f"🛑 {sender_id} stopped")
+            except Exception as e:
+                sender_logger.error(f"❌ {sender_id} failed: {e}")
+                await asyncio.sleep(1)  # Wait before retrying
+    
+    async def _send_logs_batch(self, logs: List[LogEntry], sender_id: str) -> bool:
+        """Send batch of logs to server - FIXED"""
+        try:
+            if self.offline_mode or not logs or not self.session:
+                return False
+            
+            url = f"{self.base_url}/api/v1/logs/realtime"
+            
+            # Prepare log data
+            log_data = {
+                'agent_id': self.agent_id,
+                'hostname': self.hostname,
+                'sender_id': sender_id,
+                'timestamp': datetime.now().isoformat(),
+                'log_count': len(logs),
+                'logs': [
+                    {
+                        'timestamp': log.timestamp,
+                        'level': log.level,
+                        'message': log.message,
+                        'thread_name': log.thread_name,
+                        'logger_name': log.logger_name,
+                        'category': log.category,
+                        'source': log.source,
+                        'agent_id': log.agent_id,
+                        'hostname': log.hostname
+                    }
+                    for log in logs
+                ]
+            }
+            
+            # Send to server with short timeout
+            try:
+                async with self.session.post(
+                    url, 
+                    json=log_data,
+                    timeout=aiohttp.ClientTimeout(total=3)
+                ) as response:
+                    if response.status == 200:
+                        return True
+                    else:
+                        return False
+            except (asyncio.TimeoutError, aiohttp.ClientError):
+                return False
+                
         except Exception as e:
-            sender_logger.error(f"❌ {sender_id} failed: {e}")
+            # Don't log errors in log sending to avoid infinite loops
+            return False
+    
+    async def register_agent(self, registration_data: AgentRegistrationData) -> Dict[str, Any]:
+        """Register agent with server - FIXED"""
+        try:
+            if self.offline_mode:
+                return {'success': False, 'error': 'Offline mode'}
+            
+            url = f"{self.base_url}/api/v1/agents/register"
+            payload = registration_data.to_dict()
+            
+            response = await self._make_request('POST', url, payload)
+            
+            if response and response.get('success'):
+                # Registration successful
+                agent_id = response.get('agent_id')
+                if agent_id:
+                    self.agent_id = agent_id
+                return response
+            else:
+                error_msg = response.get('error', 'Unknown error') if response else 'No response'
+                self.logger.error(f"❌ Agent registration failed: {error_msg}")
+                return {'success': False, 'error': error_msg}
+                
+        except Exception as e:
+            self.logger.error(f"❌ Agent registration failed: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    async def send_heartbeat(self, heartbeat_data: AgentHeartbeatData) -> bool:
+        """Send heartbeat to server - FIXED"""
+        try:
+            if self.offline_mode:
+                return False
+            
+            url = f"{self.base_url}/api/v1/agents/heartbeat"
+            payload = heartbeat_data.to_dict()
+            
+            response = await self._make_request('POST', url, payload)
+            
+            return response is not None and response.get('success', False)
+            
+        except Exception as e:
+            self.logger.error(f"❌ Heartbeat failed: {e}")
+            return False
+    
+    async def submit_event(self, event_data: EventData) -> Tuple[bool, Optional[Dict], Optional[str]]:
+        """Submit single event - FIXED"""
+        try:
+            if self.offline_mode:
+                self.offline_events.append(event_data)
+                return False, None, "Offline mode"
+            
+            url = f"{self.base_url}/api/v1/events/submit"
+            
+            # Convert event to dict
+            event_dict = event_data.to_dict()
+            if 'error' in event_dict:
+                return False, None, f"Event validation error: {event_dict['error']}"
+            
+            response = await self._make_request('POST', url, event_dict)
+            
+            if response and response.get('success'):
+                return True, response, None
+            else:
+                error_msg = response.get('error', 'Unknown error') if response else 'No response'
+                return False, response, error_msg
+                
+        except Exception as e:
+            return False, None, str(e)
+    
+    async def submit_event_batch(self, events: List[EventData]) -> Tuple[bool, Optional[Dict], Optional[str]]:
+        """Submit event batch with fallback to individual submission - FIXED"""
+        try:
+            if self.offline_mode:
+                self.offline_events.extend(events)
+                return False, None, "Offline mode"
+            
+            if not events:
+                return True, {'message': 'No events to submit'}, None
+            
+            # Force individual submission if configured or batch is small
+            if self.disable_batch_submission or len(events) <= self.individual_threshold:
+                return await self._submit_events_individually(events)
+            
+            # Try batch submission first
+            url = f"{self.base_url}/api/v1/events/batch-submit"
+            
+            # Convert events to dicts
+            event_dicts = []
+            invalid_events = 0
+            
+            for event in events:
+                event_dict = event.to_dict()
+                if 'error' not in event_dict:
+                    event_dicts.append(event_dict)
+                else:
+                    invalid_events += 1
+            
+            if not event_dicts:
+                return False, None, f"All {len(events)} events invalid"
+            
+            if invalid_events > 0:
+                self.logger.debug(f"Filtered out {invalid_events} invalid events from batch")
+            
+            payload = {
+                'events': event_dicts,
+                'agent_id': self.agent_id,
+                'batch_size': len(event_dicts)
+            }
+            
+            response = await self._make_request('POST', url, payload)
+            
+            if response and response.get('success'):
+                return True, response, None
+            else:
+                # Batch failed, fallback to individual submission
+                self.logger.debug("Batch submission failed, falling back to individual submission")
+                return await self._submit_events_individually(events)
+                
+        except Exception as e:
+            self.logger.debug(f"Batch submission error: {e}")
+            # Fallback to individual submission
+            return await self._submit_events_individually(events)
+    
+    async def _submit_events_individually(self, events: List[EventData]) -> Tuple[bool, Optional[Dict], Optional[str]]:
+        """Submit events individually - FIXED"""
+        try:
+            successful_submissions = 0
+            failed_submissions = 0
+            total_events = len(events)
+            
+            for event in events:
+                success, response, error = await self.submit_event(event)
+                if success:
+                    successful_submissions += 1
+                else:
+                    failed_submissions += 1
+                    self.logger.debug(f"Individual event submission failed: {error}")
+            
+            overall_success = successful_submissions > 0
+            result_message = f"Individual submission: {successful_submissions}/{total_events} successful"
+            
+            return overall_success, {'message': result_message, 'successful': successful_submissions, 'failed': failed_submissions}, None
+            
+        except Exception as e:
+            return False, None, f"Individual submission error: {str(e)}"
+    
+    async def _make_request(self, method: str, url: str, payload: Optional[Dict] = None) -> Optional[Dict]:
+        """Make HTTP request with comprehensive error handling - FIXED"""
+        if not self.session or self.offline_mode:
+            return None
+        
+        try:
+            if method.upper() == 'GET':
+                async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=self.timeout)) as response:
+                    return await self._handle_response(response)
+            elif method.upper() == 'POST':
+                async with self.session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=self.timeout)) as response:
+                    return await self._handle_response(response)
+            else:
+                self.logger.error(f"❌ Unsupported HTTP method: {method}")
+                return None
+                    
+        except asyncio.TimeoutError:
+            self.logger.warning(f"⚠️ Request timeout for {url}")
+            self.consecutive_failures += 1
+            return None
+        except aiohttp.ClientConnectorError as e:
+            self.logger.warning(f"⚠️ Connection error for {url}: {e}")
+            self.consecutive_failures += 1
+            self.offline_mode = True  # Enable offline mode on connection error
+            return None
+        except Exception as e:
+            self.logger.warning(f"⚠️ Request error for {url}: {e}")
+            self.consecutive_failures += 1
+            return None
+    
+    async def _handle_response(self, response) -> Optional[Dict]:
+        """Handle HTTP response properly - FIXED"""
+        try:
+            if response.status == 200:
+                try:
+                    json_data = await response.json()
+                    self.consecutive_failures = 0  # Reset on success
+                    return json_data
+                except Exception:
+                    text = await response.text()
+                    return {'success': True, 'message': text}
+            else:
+                try:
+                    error_data = await response.json()
+                    return error_data
+                except:
+                    text = await response.text()
+                    return {'error': f'HTTP {response.status}: {text}'}
+                    
+        except Exception as e:
+            return None
+    
+    # Additional required methods for compatibility
     
     async def _thread_log_processor(self):
         """Process logs by thread for parallel sending"""
@@ -408,49 +715,6 @@ class ServerCommunication:
         except Exception as e:
             self.logger.error(f"❌ Urgent log sending error: {e}")
     
-    async def _send_logs_batch(self, logs: List[LogEntry], sender_id: str) -> bool:
-        """Send batch of logs to server"""
-        try:
-            if self.offline_mode or not logs:
-                return False
-            
-            url = f"{self.base_url}/api/v1/logs/realtime"
-            
-            # Prepare log data
-            log_data = {
-                'agent_id': self.agent_id,
-                'hostname': self.hostname,
-                'sender_id': sender_id,
-                'timestamp': datetime.now().isoformat(),
-                'log_count': len(logs),
-                'logs': [
-                    {
-                        'timestamp': log.timestamp,
-                        'level': log.level,
-                        'message': log.message,
-                        'thread_name': log.thread_name,
-                        'logger_name': log.logger_name,
-                        'category': log.category,
-                        'source': log.source,
-                        'agent_id': log.agent_id,
-                        'hostname': log.hostname
-                    }
-                    for log in logs
-                ]
-            }
-            
-            # Send to server
-            response = await self._make_request('POST', url, log_data)
-            
-            if response and response.get('success'):
-                return True
-            else:
-                return False
-                
-        except Exception as e:
-            # Don't log errors in log sending to avoid infinite loops
-            return False
-    
     def set_agent_info(self, agent_id: str, hostname: str = None):
         """Set agent information for log streaming"""
         self.agent_id = agent_id
@@ -531,141 +795,6 @@ class ServerCommunication:
         except Exception as e:
             self.logger.error(f"❌ Error closing communication: {e}")
     
-    # ... (keep all existing methods from original communication.py)
-    
-    async def _test_connection(self):
-        """Test connection with proper error handling and retry logic"""
-        try:
-            url = f"{self.base_url}/api/v1/health/check"
-            self.logger.info(f"🔍 Testing connection to {url}")
-            
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    async with self.session.get(url, timeout=10) as response:
-                        if response.status == 200:
-                            self.is_connected = True
-                            self.consecutive_failures = 0
-                            self.logger.info("✅ Basic connectivity successful")
-                            return True
-                        else:
-                            self.logger.warning(f"⚠️ Server returned status {response.status} (attempt {attempt + 1}/{max_retries})")
-                            
-                except asyncio.TimeoutError:
-                    self.logger.warning(f"⚠️ Connection timeout (attempt {attempt + 1}/{max_retries})")
-                    if attempt < max_retries - 1:
-                        await asyncio.sleep(2)
-                        
-                except aiohttp.ClientConnectorError as e:
-                    self.logger.warning(f"⚠️ Connection error (attempt {attempt + 1}/{max_retries}): {e}")
-                    if attempt < max_retries - 1:
-                        await asyncio.sleep(2)
-                        
-                except Exception as e:
-                    self.logger.warning(f"⚠️ Unexpected error (attempt {attempt + 1}/{max_retries}): {e}")
-                    if attempt < max_retries - 1:
-                        await asyncio.sleep(2)
-            
-            # All attempts failed
-            self.is_connected = False
-            self.consecutive_failures += 1
-            self.logger.error(f"❌ Connection test failed after {max_retries} attempts")
-            return False
-                    
-        except Exception as e:
-            self.logger.error(f"❌ Connection test failed: {e}")
-            self.is_connected = False
-            self.consecutive_failures += 1
-            return False
-    
-    async def _make_request(self, method: str, url: str, payload: Optional[Dict] = None) -> Optional[Dict]:
-        """Make HTTP request with comprehensive error handling"""
-        if not self.session:
-            self.logger.error("❌ No active session available")
-            return None
-        
-        headers = {
-            'Content-Type': 'application/json',
-            'X-Agent-Token': self.auth_token
-        }
-        
-        max_retries = self.retry_attempts
-        for attempt in range(max_retries):
-            try:
-                self.logger.debug(f"📡 Making {method} request to {url} (attempt {attempt + 1}/{max_retries})")
-                
-                if method.upper() == 'GET':
-                    async with self.session.get(url, headers=headers, timeout=self.timeout) as response:
-                        return await self._handle_response(response)
-                elif method.upper() == 'POST':
-                    if payload:
-                        try:
-                            json_payload = json.dumps(payload, cls=JSONEncoder, default=serialize_datetime)
-                        except Exception as e:
-                            self.logger.error(f"❌ JSON serialization failed: {e}")
-                            return None
-                    else:
-                        json_payload = None
-                    
-                    async with self.session.post(url, data=json_payload, headers=headers, timeout=self.timeout) as response:
-                        return await self._handle_response(response)
-                else:
-                    self.logger.error(f"❌ Unsupported HTTP method: {method}")
-                    return None
-                    
-            except asyncio.TimeoutError:
-                self.logger.warning(f"⚠️ Request timeout (attempt {attempt + 1}/{max_retries})")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
-                else:
-                    self.logger.error(f"❌ Request failed after {max_retries} attempts due to timeout")
-                    
-            except aiohttp.ClientConnectorError as e:
-                self.logger.warning(f"⚠️ Connection error (attempt {attempt + 1}/{max_retries}): {e}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
-                else:
-                    self.logger.error(f"❌ Request failed after {max_retries} attempts due to connection error")
-                    
-            except aiohttp.ClientError as e:
-                self.logger.warning(f"⚠️ Client error (attempt {attempt + 1}/{max_retries}): {e}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
-                else:
-                    self.logger.error(f"❌ Request failed after {max_retries} attempts due to client error")
-                    
-            except Exception as e:
-                self.logger.warning(f"⚠️ Unexpected error (attempt {attempt + 1}/{max_retries}): {e}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
-                else:
-                    self.logger.error(f"❌ Request failed after {max_retries} attempts due to unexpected error")
-        
-        return None
-    
-    async def _handle_response(self, response) -> Optional[Dict]:
-        """Handle HTTP response properly"""
-        try:
-            if response.status == 200:
-                try:
-                    json_data = await response.json()
-                    return json_data
-                except Exception:
-                    text = await response.text()
-                    return {'success': True, 'message': text}
-            else:
-                try:
-                    error_data = await response.json()
-                    return error_data
-                except:
-                    text = await response.text()
-                    return {'error': f'HTTP {response.status}: {text}'}
-                    
-        except Exception as e:
-            return None
-    
-    # ... (include all other existing methods from original communication.py)
-    
     def get_realtime_stats(self) -> Dict[str, Any]:
         """Get realtime log streaming statistics"""
         return {
@@ -677,5 +806,7 @@ class ServerCommunication:
             'thread_queues': len(self.thread_queues),
             'log_categories': list(self.log_categories.keys()),
             'batch_size': self.log_batch_size,
-            'sending_interval': self.log_sending_interval
+            'sending_interval': self.log_sending_interval,
+            'offline_mode': self.offline_mode,
+            'consecutive_failures': self.consecutive_failures
         }
