@@ -5,7 +5,7 @@ agent:
   # Agent identification
   agent_id: null  # Will be auto-generated
   agent_name: "Linux EDR Agent - Optimized"
-  agent_version: "2.1.0-Optimized"
+  agent_version: "2.1.0-Linux-Enhanced-Realtime"
   
   # ✅ OPTIMIZATION: Reduced event processing to prevent spam
   event_batch_size: 5         # Reduced from 10 to 5
@@ -42,6 +42,77 @@ agent:
   enable_network_collector: true   # Keep network monitoring
   enable_system_collector: true    # Keep system monitoring
   enable_authentication_collector: true  # Keep security monitoring
+
+  # Log monitoring configuration
+  enable_realtime_logs: true
+  log_batch_size: 10
+  log_sending_interval: 5  # Send logs every 5 seconds
+  enable_thread_logs: true
+  enable_file_monitoring: true
+  
+  # 🚀 NEW: Realtime logging configuration
+  realtime_logging:
+    enabled: true
+    batch_size: 5
+    batch_timeout: 1.0  # 1 second
+    max_logs_per_second: 50
+    num_workers: 3
+    enable_thread_tracking: true
+    enable_file_monitoring: true
+    enable_urgent_logs: true
+  
+  # Thread log monitoring
+  thread_log_monitoring:
+    enabled: true
+    track_collector_threads: true
+    track_processor_threads: true
+    track_communication_threads: true
+    thread_check_interval: 30  # Check every 30 seconds
+  
+  # Log file monitoring
+  monitored_log_files:
+    - path: "/var/log/auth.log"
+      type: "authentication"
+      enabled: true
+      category: "security"
+      priority: "high"
+      stream_immediately: true
+    - path: "/var/log/syslog"
+      type: "system"
+      enabled: true
+      category: "system"
+      priority: "medium"
+      stream_immediately: false
+    - path: "/var/log/kern.log"
+      type: "kernel"
+      enabled: true
+      category: "system"
+      priority: "medium"
+      stream_immediately: false
+    - path: "/var/log/dmesg"
+      type: "kernel"
+      enabled: false  # Can be very noisy
+      category: "system"
+      priority: "low"
+      stream_immediately: false
+    - path: "/var/log/btmp"
+      type: "authentication"
+      enabled: true
+      category: "security"
+      priority: "high"
+      stream_immediately: true
+    - path: "/var/log/wtmp"
+      type: "authentication"
+      enabled: true
+      category: "security"
+      priority: "medium"
+      stream_immediately: false
+    - path: "/var/log/faillog"
+      type: "authentication"
+      enabled: true
+      category: "security"
+      priority: "high"
+      stream_immediately: true
 
 server:
   host: '192.168.20.85'
@@ -281,7 +352,7 @@ agent:
   # Agent identification
   agent_id: null  # Will be auto-generated if not set
   agent_name: "Linux-EDR-Agent"
-  agent_version: "2.1.0-Linux-Optimized"
+  agent_version: "2.1.0-Linux-Enhanced-Realtime"
   
   # Performance settings
   num_workers: 2
@@ -318,29 +389,69 @@ agent:
   enable_thread_logs: true
   enable_file_monitoring: true
   
+  # 🚀 NEW: Realtime logging configuration
+  realtime_logging:
+    enabled: true
+    batch_size: 5
+    batch_timeout: 1.0  # 1 second
+    max_logs_per_second: 50
+    num_workers: 3
+    enable_thread_tracking: true
+    enable_file_monitoring: true
+    enable_urgent_logs: true
+    
+  # Thread log monitoring
+  thread_log_monitoring:
+    enabled: true
+    track_collector_threads: true
+    track_processor_threads: true
+    track_communication_threads: true
+    thread_check_interval: 30  # Check every 30 seconds
+  
   # Log file monitoring
   monitored_log_files:
     - path: "/var/log/auth.log"
       type: "authentication"
       enabled: true
+      category: "security"
+      priority: "high"
+      stream_immediately: true
     - path: "/var/log/syslog"
       type: "system"
       enabled: true
+      category: "system"
+      priority: "medium"
+      stream_immediately: false
     - path: "/var/log/kern.log"
       type: "kernel"
       enabled: true
+      category: "system"
+      priority: "medium"
+      stream_immediately: false
     - path: "/var/log/dmesg"
       type: "kernel"
       enabled: false  # Can be very noisy
+      category: "system"
+      priority: "low"
+      stream_immediately: false
     - path: "/var/log/btmp"
       type: "authentication"
       enabled: true
+      category: "security"
+      priority: "high"
+      stream_immediately: true
     - path: "/var/log/wtmp"
       type: "authentication"
       enabled: true
+      category: "security"
+      priority: "medium"
+      stream_immediately: false
     - path: "/var/log/faillog"
       type: "authentication"
       enabled: true
+      category: "security"
+      priority: "high"
+      stream_immediately: true
 
 logging:
   level: "INFO"
