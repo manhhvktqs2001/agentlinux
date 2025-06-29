@@ -1,7 +1,7 @@
-# agent/core/agent_manager.py - ENHANCED with Realtime Logging
+# agent/core/agent_manager.py - ENHANCED với Alert Processing
 """
-Enhanced Linux Agent Manager with Realtime Log Streaming
-Gửi logs realtime và song song lên server
+Enhanced Linux Agent Manager với xử lý alerts từ server
+Thêm khả năng nhận và xử lý security alerts từ EDR server
 """
 
 import asyncio
@@ -30,342 +30,15 @@ from agent.collectors.network_collector import LinuxNetworkCollector
 from agent.collectors.authentication_collector import LinuxAuthenticationCollector
 from agent.collectors.system_collector import LinuxSystemCollector
 
-class RealtimeLogMonitor:
-    """🚀 NEW: Realtime log file monitor for streaming logs to server"""
-    
-    def __init__(self, agent_manager):
-        self.agent_manager = agent_manager
-        self.logger = logging.getLogger(__name__)
-        self.is_running = False
-        self.monitored_files = {}
-        self.file_positions = {}
-        self.monitoring_tasks = []
-        
-    async def initialize(self):
-        """Initialize realtime log monitoring"""
-        try:
-            config = self.agent_manager.config.get('linux_specific', {})
-            log_monitoring = config.get('realtime_log_monitoring', {})
-            
-            if not log_monitoring.get('enabled', False):
-                return
-            
-            monitored_files = log_monitoring.get('monitored_files', [])
-            
-            for file_config in monitored_files:
-                file_path = file_config.get('path')
-                if file_path and os.path.exists(file_path):
-                    self.monitored_files[file_path] = file_config
-                    self.file_positions[file_path] = self._get_file_size(file_path)
-                    
-                    self.logger.info(f"📝 Monitoring log file: {file_path}")
-            
-            self.logger.info(f"✅ Realtime log monitoring initialized for {len(self.monitored_files)} files")
-            
-        except Exception as e:
-            self.logger.error(f"❌ Realtime log monitoring initialization failed: {e}")
-    
-    async def start(self):
-        """Start realtime log monitoring"""
-        try:
-            if not self.monitored_files:
-                return
-            
-            self.is_running = True
-            
-            # Start monitoring task for each file
-            for file_path in self.monitored_files:
-                task = asyncio.create_task(
-                    self._monitor_file(file_path),
-                    name=f"log-monitor-{os.path.basename(file_path)}"
-                )
-                self.monitoring_tasks.append(task)
-            
-            self.logger.info(f"🚀 Started realtime log monitoring for {len(self.monitoring_tasks)} files")
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error starting realtime log monitoring: {e}")
-    
-    async def stop(self):
-        """Stop realtime log monitoring"""
-        try:
-            self.is_running = False
-            
-            # Cancel all monitoring tasks
-            for task in self.monitoring_tasks:
-                if not task.done():
-                    task.cancel()
-            
-            if self.monitoring_tasks:
-                await asyncio.gather(*self.monitoring_tasks, return_exceptions=True)
-                self.monitoring_tasks.clear()
-            
-            self.logger.info("✅ Realtime log monitoring stopped")
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error stopping realtime log monitoring: {e}")
-    
-    async def _monitor_file(self, file_path: str):
-        """Monitor individual log file"""
-        try:
-            file_config = self.monitored_files[file_path]
-            check_interval = self.agent_manager.config.get('linux_specific', {}).get('realtime_log_monitoring', {}).get('check_interval', 5)
-            
-            while self.is_running:
-                try:
-                    current_size = self._get_file_size(file_path)
-                    last_position = self.file_positions.get(file_path, 0)
-                    
-                    if current_size > last_position:
-                        # File has new content
-                        new_lines = await self._read_new_lines(file_path, last_position, current_size)
-                        
-                        if new_lines:
-                            await self._process_log_lines(file_path, new_lines, file_config)
-                        
-                        self.file_positions[file_path] = current_size
-                    
-                    elif current_size < last_position:
-                        # File was rotated or truncated
-                        self.logger.info(f"📝 Log file rotated: {file_path}")
-                        self.file_positions[file_path] = 0
-                    
-                    await asyncio.sleep(check_interval)
-                    
-                except Exception as e:
-                    self.logger.error(f"❌ Error monitoring {file_path}: {e}")
-                    await asyncio.sleep(check_interval)
-                    
-        except asyncio.CancelledError:
-            self.logger.info(f"🛑 Log monitoring stopped for {file_path}")
-        except Exception as e:
-            self.logger.error(f"❌ Log monitoring failed for {file_path}: {e}")
-    
-    def _get_file_size(self, file_path: str) -> int:
-        """Get file size safely"""
-        try:
-            return os.path.getsize(file_path)
-        except:
-            return 0
-    
-    async def _read_new_lines(self, file_path: str, start_pos: int, end_pos: int) -> List[str]:
-        """Read new lines from file"""
-        try:
-            lines = []
-            
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                f.seek(start_pos)
-                content = f.read(end_pos - start_pos)
-                lines = content.splitlines()
-            
-            return lines
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error reading {file_path}: {e}")
-            return []
-    
-    async def _process_log_lines(self, file_path: str, lines: List[str], file_config: Dict):
-        """Process new log lines and send to server"""
-        try:
-            category = file_config.get('category', 'general')
-            priority = file_config.get('priority', 'medium')
-            stream_immediately = file_config.get('stream_immediately', False)
-            
-            for line in lines:
-                if line.strip():
-                    # Send log line to server via communication manager
-                    if self.agent_manager.communication:
-                        await self.agent_manager.communication.add_log_entry(
-                            level='INFO',
-                            message=f"[{os.path.basename(file_path)}] {line}",
-                            category=category,
-                            thread_name=f"log-monitor-{os.path.basename(file_path)}",
-                            logger_name=f"file-monitor.{os.path.basename(file_path)}"
-                        )
-                        
-                        # If urgent, send immediately
-                        if stream_immediately and category in ['security', 'authentication', 'error']:
-                            # Create urgent log entry
-                            urgent_log = {
-                                'timestamp': datetime.now().isoformat(),
-                                'level': 'WARNING' if category == 'security' else 'INFO',
-                                'message': f"[URGENT] [{os.path.basename(file_path)}] {line}",
-                                'category': category,
-                                'priority': priority,
-                                'source': 'file_monitor',
-                                'file_path': file_path
-                            }
-                            
-                            # Send immediately
-                            asyncio.create_task(self._send_urgent_log(urgent_log))
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error processing log lines from {file_path}: {e}")
-    
-    async def _send_urgent_log(self, log_data: Dict):
-        """Send urgent log immediately"""
-        try:
-            if self.agent_manager.communication:
-                # Send urgent log with highest priority
-                await self.agent_manager.communication.add_log_entry(
-                    level='CRITICAL',
-                    message=log_data['message'],
-                    category='urgent',
-                    thread_name='urgent-sender',
-                    logger_name='urgent-log-monitor'
-                )
-        except Exception as e:
-            self.logger.error(f"❌ Error sending urgent log: {e}")
+# ✅ ENHANCED: Import alert notification system
+from agent.utils.security_notifications import (
+    LinuxSecurityNotifier, 
+    initialize_linux_notifier,
+    get_linux_notifier
+)
 
-class ThreadLogTracker:
-    """🚀 NEW: Track and stream logs from different threads"""
-    
-    def __init__(self, agent_manager):
-        self.agent_manager = agent_manager
-        self.logger = logging.getLogger(__name__)
-        self.thread_loggers = {}
-        self.tracking_tasks = []
-        self.is_running = False
-        
-    async def initialize(self):
-        """Initialize thread log tracking"""
-        try:
-            config = self.agent_manager.config.get('agent', {})
-            thread_monitoring = config.get('thread_log_monitoring', {})
-            
-            if not thread_monitoring.get('enabled', False):
-                return
-            
-            # Create loggers for different thread categories
-            if thread_monitoring.get('track_collector_threads', True):
-                self._create_thread_logger('collector-threads', 'process')
-            
-            if thread_monitoring.get('track_processor_threads', True):
-                self._create_thread_logger('processor-threads', 'system')
-            
-            if thread_monitoring.get('track_communication_threads', True):
-                self._create_thread_logger('communication-threads', 'network')
-            
-            self.logger.info(f"✅ Thread log tracking initialized for {len(self.thread_loggers)} categories")
-            
-        except Exception as e:
-            self.logger.error(f"❌ Thread log tracking initialization failed: {e}")
-    
-    def _create_thread_logger(self, category: str, log_category: str):
-        """Create logger for thread category"""
-        logger = logging.getLogger(f"thread.{category}")
-        logger.setLevel(logging.INFO)
-        
-        # Create custom handler that sends to communication manager
-        handler = ThreadLogHandler(self.agent_manager, category, log_category)
-        formatter = logging.Formatter('%(asctime)s - %(threadName)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-        
-        self.thread_loggers[category] = logger
-    
-    async def start(self):
-        """Start thread log tracking"""
-        try:
-            if not self.thread_loggers:
-                return
-            
-            self.is_running = True
-            
-            # Start tracking task
-            task = asyncio.create_task(self._track_threads())
-            self.tracking_tasks.append(task)
-            
-            self.logger.info("🚀 Thread log tracking started")
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error starting thread log tracking: {e}")
-    
-    async def stop(self):
-        """Stop thread log tracking"""
-        try:
-            self.is_running = False
-            
-            for task in self.tracking_tasks:
-                if not task.done():
-                    task.cancel()
-            
-            if self.tracking_tasks:
-                await asyncio.gather(*self.tracking_tasks, return_exceptions=True)
-                self.tracking_tasks.clear()
-            
-            self.logger.info("✅ Thread log tracking stopped")
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error stopping thread log tracking: {e}")
-    
-    async def _track_threads(self):
-        """Track active threads and their activities"""
-        try:
-            while self.is_running:
-                try:
-                    active_threads = threading.enumerate()
-                    
-                    for thread in active_threads:
-                        thread_name = thread.name
-                        
-                        # Categorize thread and log activity
-                        if 'collector' in thread_name.lower():
-                            self._log_thread_activity('collector-threads', thread_name, 'Collector thread active')
-                        elif 'processor' in thread_name.lower() or 'worker' in thread_name.lower():
-                            self._log_thread_activity('processor-threads', thread_name, 'Processor thread active')
-                        elif 'communication' in thread_name.lower() or 'sender' in thread_name.lower():
-                            self._log_thread_activity('communication-threads', thread_name, 'Communication thread active')
-                    
-                    await asyncio.sleep(30)  # Check every 30 seconds
-                    
-                except Exception as e:
-                    self.logger.error(f"❌ Thread tracking error: {e}")
-                    await asyncio.sleep(30)
-                    
-        except asyncio.CancelledError:
-            self.logger.info("🛑 Thread tracking stopped")
-        except Exception as e:
-            self.logger.error(f"❌ Thread tracking failed: {e}")
-    
-    def _log_thread_activity(self, category: str, thread_name: str, message: str):
-        """Log thread activity"""
-        try:
-            if category in self.thread_loggers:
-                logger = self.thread_loggers[category]
-                logger.info(f"[{thread_name}] {message}")
-        except Exception as e:
-            self.logger.error(f"❌ Error logging thread activity: {e}")
-
-class ThreadLogHandler(logging.Handler):
-    """Custom log handler for thread-specific logging"""
-    
-    def __init__(self, agent_manager, category: str, log_category: str):
-        super().__init__()
-        self.agent_manager = agent_manager
-        self.category = category
-        self.log_category = log_category
-    
-    def emit(self, record):
-        """Emit log record for thread tracking"""
-        try:
-            if self.agent_manager.communication:
-                # Send to communication manager
-                asyncio.create_task(
-                    self.agent_manager.communication.add_log_entry(
-                        level=record.levelname,
-                        message=self.format(record),
-                        category=self.log_category,
-                        thread_name=record.thread,
-                        logger_name=f"thread.{self.category}"
-                    )
-                )
-        except Exception:
-            # Don't let logging errors crash the application
-            pass
-
-class LinuxAgentManager:
-    """Enhanced Linux Agent Manager with Realtime Log Streaming"""
+class EnhancedLinuxAgentManager:
+    """Enhanced Linux Agent Manager với Alert Processing và Real-time Notifications"""
     
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
@@ -398,9 +71,23 @@ class LinuxAgentManager:
         self.event_processor = None
         self.collectors = {}
         
-        # 🚀 NEW: Realtime logging components
-        self.realtime_log_monitor = RealtimeLogMonitor(self)
-        self.thread_log_tracker = ThreadLogTracker(self)
+        # ✅ ENHANCED: Security notification system
+        self.security_notifier = None
+        self.alert_handler_registered = False
+        
+        # ✅ ENHANCED: Alert processing statistics
+        self.alert_stats = {
+            'total_alerts_received': 0,
+            'server_rule_alerts': 0,
+            'local_rule_alerts': 0,
+            'critical_alerts': 0,
+            'high_alerts': 0,
+            'medium_alerts': 0,
+            'low_alerts': 0,
+            'alerts_acknowledged': 0,
+            'last_alert_time': None,
+            'alert_processing_errors': 0
+        }
         
         # Performance monitoring
         self.performance_stats = {
@@ -409,9 +96,9 @@ class LinuxAgentManager:
             'memory_usage_mb': 0,
             'cpu_usage_percent': 0,
             'last_performance_check': time.time(),
-            'logs_sent': 0,  # 🚀 NEW: Track logs sent
-            'logs_failed': 0,  # 🚀 NEW: Track failed logs
-            'realtime_streams_active': 0  # 🚀 NEW: Track active streams
+            'logs_sent': 0,
+            'logs_failed': 0,
+            'realtime_streams_active': 0
         }
         
         # Health monitoring
@@ -419,8 +106,8 @@ class LinuxAgentManager:
             'communication': True,
             'event_processor': True,
             'collectors': {},
-            'realtime_logging': True,  # 🚀 NEW: Realtime logging health
-            'log_streaming': True,  # 🚀 NEW: Log streaming health
+            'security_notifier': True,  # ✅ ENHANCED: Alert system health
+            'alert_processing': True,   # ✅ ENHANCED: Alert processing health
             'last_health_check': time.time()
         }
         
@@ -436,9 +123,10 @@ class LinuxAgentManager:
             'uptime_seconds': time.time() - psutil.boot_time()
         }
         
-        self.logger.info(f"🐧 Enhanced Linux Agent Manager initialized with ID: {self.agent_id[:8]}...")
+        self.logger.info(f"🚨 Enhanced Linux Agent Manager initialized with Alert Processing")
         self.logger.info(f"🔐 Root privileges: {self.has_root_privileges}")
-        self.logger.info(f"🚀 Realtime logging enabled: {self.config.get('agent', {}).get('enable_realtime_logs', False)}")
+        self.logger.info(f"🔔 Alert notifications enabled: True")
+        self.logger.info(f"🆔 Agent ID: {self.agent_id[:8]}...")
     
     def _check_root_privileges(self) -> bool:
         """Check if running with root privileges"""
@@ -615,26 +303,27 @@ class LinuxAgentManager:
             return 'local'
     
     async def initialize(self):
-        """Initialize Linux Agent Manager with enhanced realtime features"""
+        """✅ ENHANCED: Initialize Linux Agent Manager with alert processing"""
         try:
             self.logger.info("🚀 Starting Enhanced Linux Agent Manager initialization...")
             
             await self._check_system_requirements()
             
-            # Initialize Communication with realtime features
+            # ✅ ENHANCED: Initialize Security Notification System FIRST
+            await self._initialize_security_notifications()
+            
+            # Initialize Communication with alert handling
             await self._initialize_communication_with_retries()
             
             # Initialize Event Processor
             await self._initialize_event_processor()
-            
-            # 🚀 NEW: Initialize realtime logging components
-            await self._initialize_realtime_components()
             
             # Initialize Collectors with selective enabling
             await self._initialize_collectors_optimized()
             
             self.is_initialized = True
             self.logger.info("🎉 Enhanced Linux Agent Manager initialization completed successfully")
+            self.logger.info("🔔 Alert processing system ready")
             
         except Exception as e:
             self.logger.error(f"❌ Enhanced Linux agent manager initialization failed: {e}")
@@ -642,35 +331,46 @@ class LinuxAgentManager:
             self.logger.error(f"🔍 Full error details:\n{traceback.format_exc()}")
             raise Exception(f"Enhanced Linux agent manager initialization failed: {e}")
     
-    async def _initialize_realtime_components(self):
-        """🚀 NEW: Initialize realtime logging components - DISABLED"""
+    async def _initialize_security_notifications(self):
+        """✅ ENHANCED: Initialize security notification system"""
         try:
-            self.logger.info("🚀 Initializing realtime logging components...")
+            self.logger.info("🔔 Initializing Security Notification System...")
             
-            # ✅ FIXED: Disable realtime components to prevent log sender errors
-            self.logger.info("📝 Realtime logging components disabled (server doesn't support logs endpoint)")
+            # Initialize the Linux security notifier
+            self.security_notifier = initialize_linux_notifier(self.config_manager)
             
-            # Set up basic agent info in communication
-            if self.communication:
-                self.communication.set_agent_info(self.agent_id, self.system_info.get('hostname'))
-            
-            self.logger.info("✅ Realtime logging components initialized (disabled)")
+            if self.security_notifier:
+                # Test notification capabilities
+                notifier_stats = self.security_notifier.get_stats()
+                self.logger.info("✅ Security Notification System initialized:")
+                self.logger.info(f"   🖥️ Desktop: {notifier_stats.get('desktop_environment', 'Unknown')}")
+                self.logger.info(f"   🔔 Methods: {notifier_stats.get('notification_methods', [])}")
+                self.logger.info(f"   🔊 Sound: {notifier_stats.get('sound_enabled', False)}")
+                self.logger.info(f"   📺 Display: {notifier_stats.get('display_available', False)}")
+                
+                self.health_checks['security_notifier'] = True
+            else:
+                self.logger.warning("⚠️ Security notification system not available")
+                self.health_checks['security_notifier'] = False
             
         except Exception as e:
-            self.logger.error(f"❌ Realtime components initialization failed: {e}")
-            self.health_checks['realtime_logging'] = False
+            self.logger.error(f"❌ Security notification initialization failed: {e}")
+            self.health_checks['security_notifier'] = False
     
     async def _initialize_communication_with_retries(self):
-        """Initialize communication with retry logic - FIXED"""
+        """✅ ENHANCED: Initialize communication with alert handler registration"""
         max_retries = 3
         retry_delay = 5
         
         for attempt in range(max_retries):
             try:
-                self.logger.info("📡 Initializing Server Communication...")
+                self.logger.info("📡 Initializing Enhanced Server Communication...")
                 self.communication = ServerCommunication(self.config_manager)
                 await self.communication.initialize()
                 self.logger.info("✅ Server Communication initialized")
+                
+                # ✅ ENHANCED: Register alert handler
+                await self._register_alert_handler()
                 
                 # Test connectivity
                 self.logger.info("🔍 Testing server connectivity...")
@@ -695,6 +395,185 @@ class LinuxAgentManager:
         
         # If we get here, all retries failed but we should continue
         self.logger.warning("⚠️ Communication initialization failed - agent will run in offline mode")
+    
+    async def _register_alert_handler(self):
+        """✅ ENHANCED: Register alert handler with communication system"""
+        try:
+            if self.communication and self.security_notifier:
+                # Set communication reference in security notifier
+                self.security_notifier.set_communication(self.communication)
+                
+                # Add our enhanced alert handler
+                self.communication.add_alert_handler(self._enhanced_alert_handler)
+                
+                self.alert_handler_registered = True
+                self.health_checks['alert_processing'] = True
+                
+                self.logger.info("✅ Enhanced alert handler registered with communication system")
+                self.logger.info("🔔 Agent ready to receive and process security alerts from server")
+            else:
+                self.logger.warning("⚠️ Cannot register alert handler - missing communication or notifier")
+                self.health_checks['alert_processing'] = False
+                
+        except Exception as e:
+            self.logger.error(f"❌ Failed to register alert handler: {e}")
+            self.health_checks['alert_processing'] = False
+    
+    async def _enhanced_alert_handler(self, security_alert):
+        """✅ ENHANCED: Enhanced alert handler for processing security alerts"""
+        try:
+            self.logger.warning(f"🚨 ENHANCED ALERT HANDLER PROCESSING:")
+            self.logger.warning(f"   🆔 Alert ID: {security_alert.alert_id}")
+            self.logger.warning(f"   📋 Type: {security_alert.alert_type}")
+            self.logger.warning(f"   ⚠️ Severity: {security_alert.severity}")
+            self.logger.warning(f"   📊 Risk Score: {security_alert.risk_score}")
+            self.logger.warning(f"   📝 Rule: {security_alert.rule_name}")
+            
+            # Update alert statistics
+            self._update_alert_statistics(security_alert)
+            
+            # Process alert through security notifier
+            if self.security_notifier:
+                await self.security_notifier.handle_security_alert(security_alert)
+                self.logger.info("✅ Alert processed through security notification system")
+            else:
+                self.logger.warning("⚠️ No security notifier available - showing basic alert")
+                await self._show_basic_alert(security_alert)
+            
+            # Log alert to system for audit trail
+            await self._log_alert_to_system(security_alert)
+            
+            # Check if alert requires immediate action
+            if security_alert.action_required or security_alert.severity == 'Critical':
+                await self._handle_critical_alert(security_alert)
+            
+        except Exception as e:
+            self.logger.error(f"❌ Enhanced alert handler error: {e}")
+            self.alert_stats['alert_processing_errors'] += 1
+    
+    def _update_alert_statistics(self, security_alert):
+        """✅ ENHANCED: Update alert processing statistics"""
+        try:
+            self.alert_stats['total_alerts_received'] += 1
+            self.alert_stats['last_alert_time'] = datetime.now()
+            
+            # Update by severity
+            severity = security_alert.severity.lower()
+            if severity == 'critical':
+                self.alert_stats['critical_alerts'] += 1
+            elif severity == 'high':
+                self.alert_stats['high_alerts'] += 1
+            elif severity == 'medium':
+                self.alert_stats['medium_alerts'] += 1
+            elif severity == 'low':
+                self.alert_stats['low_alerts'] += 1
+            
+            # Update by type
+            if 'server' in security_alert.rule_name.lower():
+                self.alert_stats['server_rule_alerts'] += 1
+            else:
+                self.alert_stats['local_rule_alerts'] += 1
+            
+        except Exception as e:
+            self.logger.debug(f"Error updating alert statistics: {e}")
+    
+    async def _show_basic_alert(self, security_alert):
+        """✅ ENHANCED: Show basic alert when no notifier available"""
+        try:
+            print("\n" + "=" * 80)
+            print("🚨 LINUX SECURITY ALERT")
+            print("=" * 80)
+            print(f"🕒 Time: {security_alert.timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"🏷️ Alert ID: {security_alert.alert_id}")
+            print(f"⚠️ Severity: {security_alert.severity}")
+            print(f"📊 Risk Score: {security_alert.risk_score}/100")
+            print(f"📝 Rule: {security_alert.rule_name}")
+            print(f"📋 Description: {security_alert.rule_description}")
+            print(f"🔍 Threat: {security_alert.threat_description}")
+            print("=" * 80)
+            print("🔧 RECOMMENDED ACTIONS:")
+            print("1. ✅ Investigate immediately")
+            print("2. 📋 Check system logs for related activity")
+            print("3. 🔍 Monitor system for additional suspicious behavior")
+            print("4. 📞 Contact security team if needed")
+            print("=" * 80)
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error showing basic alert: {e}")
+    
+    async def _log_alert_to_system(self, security_alert):
+        """✅ ENHANCED: Log alert to system for audit trail"""
+        try:
+            # Log to syslog if available
+            import syslog
+            try:
+                syslog.openlog("edr-agent", syslog.LOG_PID, syslog.LOG_SECURITY)
+                syslog.syslog(syslog.LOG_WARNING, 
+                    f"SECURITY ALERT: {security_alert.rule_name} - "
+                    f"Severity: {security_alert.severity} - "
+                    f"Risk: {security_alert.risk_score}/100"
+                )
+                syslog.closelog()
+            except:
+                pass
+            
+            # Log to application log
+            self.logger.warning(f"🚨 SECURITY ALERT AUDIT LOG:")
+            self.logger.warning(f"   Alert ID: {security_alert.alert_id}")
+            self.logger.warning(f"   Rule: {security_alert.rule_name}")
+            self.logger.warning(f"   Severity: {security_alert.severity}")
+            self.logger.warning(f"   Risk Score: {security_alert.risk_score}")
+            self.logger.warning(f"   Timestamp: {security_alert.timestamp}")
+            
+            # Write to dedicated alert log file
+            try:
+                alert_log_file = Path("logs/security_alerts.log")
+                alert_log_file.parent.mkdir(exist_ok=True)
+                
+                with open(alert_log_file, 'a', encoding='utf-8') as f:
+                    f.write(f"{datetime.now().isoformat()} - ALERT - "
+                           f"ID:{security_alert.alert_id} - "
+                           f"Rule:{security_alert.rule_name} - "
+                           f"Severity:{security_alert.severity} - "
+                           f"Risk:{security_alert.risk_score}\n")
+            except Exception as e:
+                self.logger.debug(f"Could not write to alert log file: {e}")
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error logging alert to system: {e}")
+    
+    async def _handle_critical_alert(self, security_alert):
+        """✅ ENHANCED: Handle critical alerts requiring immediate action"""
+        try:
+            self.logger.critical(f"🚨 CRITICAL ALERT HANDLING: {security_alert.rule_name}")
+            
+            # For critical alerts, also send system-wide notification
+            if security_alert.severity == 'Critical':
+                try:
+                    # Use wall command to send message to all terminals
+                    critical_message = f"""
+🚨 CRITICAL SECURITY ALERT 🚨
+Rule: {security_alert.rule_name}
+Risk Score: {security_alert.risk_score}/100
+Time: {security_alert.timestamp.strftime('%Y-%m-%d %H:%M:%S')}
+
+IMMEDIATE ACTION REQUIRED
+Contact your system administrator immediately.
+"""
+                    subprocess.run(['wall', critical_message], 
+                                 input=critical_message, text=True, timeout=5)
+                except Exception as e:
+                    self.logger.debug(f"Could not send wall message: {e}")
+            
+            # Log critical alert with high priority
+            self.logger.critical(f"🚨 CRITICAL SECURITY THREAT DETECTED:")
+            self.logger.critical(f"   🏷️ Rule: {security_alert.rule_name}")
+            self.logger.critical(f"   📊 Risk Score: {security_alert.risk_score}/100")
+            self.logger.critical(f"   🔍 Threat: {security_alert.threat_description}")
+            self.logger.critical(f"   ⚠️ ACTION REQUIRED: Immediate investigation needed")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error handling critical alert: {e}")
     
     async def _initialize_event_processor(self):
         """Initialize Event Processor with validation"""
@@ -840,9 +719,9 @@ class LinuxAgentManager:
             raise
     
     async def start(self):
-        """Start Enhanced Linux Agent Manager with realtime features - FIXED"""
+        """✅ ENHANCED: Start Linux Agent Manager with alert processing"""
         try:
-            self.logger.info("🚀 Starting Enhanced Linux Agent Manager...")
+            self.logger.info("🚀 Starting Enhanced Linux Agent Manager with Alert Processing...")
             
             # Register with server if not already registered
             if not self.is_registered:
@@ -869,8 +748,8 @@ class LinuxAgentManager:
             await self.event_processor.start()
             self.logger.info("✅ Event Processor started")
             
-            # 🚀 NEW: Start realtime logging components
-            await self._start_realtime_components()
+            # ✅ ENHANCED: Start alert polling if communication is available
+            await self._start_alert_monitoring()
             
             # Start collectors with error handling
             await self._start_collectors_safely()
@@ -880,17 +759,18 @@ class LinuxAgentManager:
             self.is_monitoring = True
             self.start_time = datetime.now()
             
-            # Start enhanced monitoring tasks
+            # Start enhanced monitoring tasks with alert monitoring
             asyncio.create_task(self._heartbeat_loop())
             asyncio.create_task(self._system_monitor())
             asyncio.create_task(self._performance_monitor())
             asyncio.create_task(self._health_monitor())
-            asyncio.create_task(self._realtime_logging_monitor())  # 🚀 NEW
+            asyncio.create_task(self._alert_monitoring_loop())  # ✅ ENHANCED: Alert monitoring
             
             self.logger.info(f"🎉 Enhanced Linux Agent Manager started successfully")
             self.logger.info(f"   🆔 Agent ID: {self.agent_id}")
             self.logger.info(f"   📊 Active Collectors: {len(self.collectors)}")
-            self.logger.info(f"   🚀 Realtime Logging: {self.config.get('agent', {}).get('enable_realtime_logs', False)}")
+            self.logger.info(f"   🔔 Alert Processing: {self.alert_handler_registered}")
+            self.logger.info(f"   🚨 Security Notifications: {bool(self.security_notifier)}")
             self.logger.info(f"   🐧 Platform: Linux ({self.system_info.get('distribution', 'Unknown')})")
             
             if not self.is_registered:
@@ -900,24 +780,17 @@ class LinuxAgentManager:
             self.logger.error(f"❌ Enhanced Linux agent manager start failed: {e}")
             raise
     
-    async def _start_realtime_components(self):
-        """🚀 NEW: Start realtime logging components - DISABLED"""
+    async def _start_alert_monitoring(self):
+        """✅ ENHANCED: Start alert monitoring and polling"""
         try:
-            self.logger.info("🚀 Starting realtime logging components...")
-            
-            # ✅ FIXED: Disable realtime components to prevent log sender errors
-            self.logger.info("📝 Realtime logging components disabled (server doesn't support logs endpoint)")
-            
-            # Update health status
-            self.health_checks['realtime_logging'] = False  # Disabled
-            self.health_checks['log_streaming'] = False     # Disabled
-            
-            self.logger.info("✅ Realtime logging components started (disabled)")
-            
+            if self.communication and hasattr(self.communication, 'start_alert_polling'):
+                await self.communication.start_alert_polling()
+                self.logger.info("✅ Alert polling started")
+            else:
+                self.logger.warning("⚠️ Alert polling not available - communication offline")
+                
         except Exception as e:
-            self.logger.error(f"❌ Error starting realtime components: {e}")
-            self.health_checks['realtime_logging'] = False
-            self.health_checks['log_streaming'] = False
+            self.logger.error(f"❌ Error starting alert monitoring: {e}")
     
     async def _start_collectors_safely(self):
         """Start collectors with individual error handling"""
@@ -955,7 +828,7 @@ class LinuxAgentManager:
                 self.logger.info("💡 Agent will run in offline mode and retry registration later")
                 return False
             
-            self.logger.info("📡 Registering Linux Agent with complete data...")
+            self.logger.info("📡 Registering Enhanced Linux Agent with alert capabilities...")
             
             # Get comprehensive system information
             ip_address = self._get_local_ip()
@@ -973,7 +846,7 @@ class LinuxAgentManager:
                 operating_system=f"Linux {self.system_info.get('distribution', 'Unknown')}",
                 os_version=self.system_info.get('kernel', 'Unknown'),
                 architecture=self.system_info.get('architecture', 'Unknown'),
-                agent_version='2.1.0-Linux-FIXED',
+                agent_version='2.1.0-Linux-ENHANCED-ALERTS',
                 mac_address=mac_address,
                 domain=self._get_domain(),
                 install_path=str(Path(__file__).resolve().parent.parent.parent),
@@ -991,15 +864,16 @@ class LinuxAgentManager:
             )
             
             # Log registration details
-            self.logger.info(f"📋 Registration Details:")
+            self.logger.info(f"📋 Enhanced Registration Details:")
             self.logger.info(f"   🆔 Agent ID: {self.agent_id}")
             self.logger.info(f"   🖥️ Hostname: {registration_data.hostname}")
             self.logger.info(f"   🌐 IP Address: {registration_data.ip_address}")
             self.logger.info(f"   🐧 OS: {registration_data.operating_system}")
-            self.logger.info(f"   🌐 Domain: {registration_data.domain}")
+            self.logger.info(f"   🔔 Alert Capable: YES")
+            self.logger.info(f"   🚨 Notification Ready: {bool(self.security_notifier)}")
             
             # Register agent with server
-            self.logger.info("📝 Registering agent with server...")
+            self.logger.info("📝 Registering enhanced agent with server...")
             registration_result = await self.communication.register_agent(registration_data)
             
             if registration_result and (registration_result.get('success') or registration_result.get('agent_id')):
@@ -1007,7 +881,8 @@ class LinuxAgentManager:
                 if returned_agent_id:
                     self.agent_id = returned_agent_id
                     self.is_registered = True
-                    self.logger.info(f"✅ Agent registered successfully: {self.agent_id}")
+                    self.logger.info(f"✅ Enhanced agent registered successfully: {self.agent_id}")
+                    self.logger.info("🔔 Agent ready to receive security alerts from server")
                     return True
                 else:
                     self.logger.warning("⚠️ Registration successful but no agent_id returned")
@@ -1042,14 +917,73 @@ class LinuxAgentManager:
             
             # Update communication
             if self.communication:
-                if hasattr(self.communication, 'agent_id'):
-                    self.communication.agent_id = self.agent_id
+                if hasattr(self.communication, 'set_agent_id'):
+                    self.communication.set_agent_id(self.agent_id)
                     self.logger.debug("✅ Communication agent_id updated")
             
             self.logger.info("✅ All components updated with new agent_id")
             
         except Exception as e:
             self.logger.error(f"❌ Error updating agent_ids: {e}")
+    
+    async def _alert_monitoring_loop(self):
+        """✅ ENHANCED: Monitor alert processing health and statistics"""
+        try:
+            while self.is_running and not self.is_paused:
+                try:
+                    # Check alert processing health
+                    if self.communication and hasattr(self.communication, 'get_stats'):
+                        comm_stats = self.communication.get_stats()
+                        
+                        # Update alert statistics from communication
+                        self.alert_stats.update({
+                            'total_alerts_received': comm_stats.get('alerts_received', 0),
+                            'alerts_processed': comm_stats.get('alerts_processed', 0)
+                        })
+                    
+                    # Check security notifier health
+                    if self.security_notifier:
+                        notifier_stats = self.security_notifier.get_stats()
+                        self.health_checks['security_notifier'] = notifier_stats.get('enabled', False)
+                    
+                    # Log alert statistics every 5 minutes
+                    if int(time.time()) % 300 == 0:
+                        self._log_alert_statistics()
+                    
+                    # Check for stale alert processing
+                    if (self.alert_stats['last_alert_time'] and 
+                        (datetime.now() - self.alert_stats['last_alert_time']).total_seconds() > 3600):
+                        self.logger.info("📊 No alerts received in the last hour")
+                    
+                    await asyncio.sleep(60)  # Check every minute
+                    
+                except Exception as e:
+                    self.logger.error(f"❌ Alert monitoring error: {e}")
+                    await asyncio.sleep(60)
+                    
+        except Exception as e:
+            self.logger.error(f"❌ Alert monitoring loop failed: {e}")
+    
+    def _log_alert_statistics(self):
+        """✅ ENHANCED: Log alert processing statistics"""
+        try:
+            self.logger.info("🚨 Alert Processing Statistics:")
+            self.logger.info(f"   📥 Total Alerts Received: {self.alert_stats['total_alerts_received']}")
+            self.logger.info(f"   🔴 Critical: {self.alert_stats['critical_alerts']}")
+            self.logger.info(f"   🟠 High: {self.alert_stats['high_alerts']}")
+            self.logger.info(f"   🟡 Medium: {self.alert_stats['medium_alerts']}")
+            self.logger.info(f"   🟢 Low: {self.alert_stats['low_alerts']}")
+            self.logger.info(f"   📊 Server Rules: {self.alert_stats['server_rule_alerts']}")
+            self.logger.info(f"   📋 Local Rules: {self.alert_stats['local_rule_alerts']}")
+            self.logger.info(f"   ✅ Acknowledged: {self.alert_stats['alerts_acknowledged']}")
+            self.logger.info(f"   ❌ Processing Errors: {self.alert_stats['alert_processing_errors']}")
+            
+            if self.alert_stats['last_alert_time']:
+                last_alert_ago = (datetime.now() - self.alert_stats['last_alert_time']).total_seconds()
+                self.logger.info(f"   🕒 Last Alert: {last_alert_ago:.0f} seconds ago")
+                
+        except Exception as e:
+            self.logger.debug(f"Error logging alert statistics: {e}")
     
     async def _heartbeat_loop(self):
         """Send periodic heartbeats to server"""
@@ -1111,7 +1045,7 @@ class LinuxAgentManager:
             self.logger.error(f"❌ System monitor failed: {e}")
     
     async def _performance_monitor(self):
-        """✅ NEW: Monitor agent performance"""
+        """Monitor agent performance"""
         try:
             while self.is_running and not self.is_paused:
                 try:
@@ -1153,7 +1087,7 @@ class LinuxAgentManager:
             self.logger.error(f"❌ Performance monitor failed: {e}")
     
     async def _health_monitor(self):
-        """✅ NEW: Monitor component health"""
+        """Monitor component health"""
         try:
             while self.is_running and not self.is_paused:
                 try:
@@ -1172,15 +1106,23 @@ class LinuxAgentManager:
                         else:
                             self.health_checks['collectors'][name] = True  # Assume healthy if no status
                     
+                    # ✅ ENHANCED: Check alert processing health
+                    self.health_checks['alert_processing'] = self.alert_handler_registered
+                    if self.security_notifier:
+                        notifier_stats = self.security_notifier.get_stats()
+                        self.health_checks['security_notifier'] = notifier_stats.get('enabled', False)
+                    
                     # Log health summary every 5 minutes
                     if int(time.time()) % 300 == 0:
                         healthy_collectors = sum(1 for status in self.health_checks['collectors'].values() if status)
                         total_collectors = len(self.health_checks['collectors'])
                         
-                        self.logger.info("🏥 Health Status:")
+                        self.logger.info("🏥 Enhanced Health Status:")
                         self.logger.info(f"   📡 Communication: {'✅' if self.health_checks['communication'] else '❌'}")
                         self.logger.info(f"   ⚡ Event Processor: {'✅' if self.health_checks['event_processor'] else '❌'}")
                         self.logger.info(f"   📊 Collectors: {healthy_collectors}/{total_collectors} healthy")
+                        self.logger.info(f"   🔔 Alert Processing: {'✅' if self.health_checks['alert_processing'] else '❌'}")
+                        self.logger.info(f"   🚨 Security Notifier: {'✅' if self.health_checks['security_notifier'] else '❌'}")
                     
                     self.health_checks['last_health_check'] = time.time()
                     
@@ -1194,18 +1136,20 @@ class LinuxAgentManager:
             self.logger.error(f"❌ Health monitor failed: {e}")
     
     def get_status(self) -> Dict[str, Any]:
-        """Get enhanced agent status with realtime logging metrics"""
+        """✅ ENHANCED: Get enhanced agent status with alert processing info"""
         return self.get_enhanced_status()
     
     async def stop(self):
-        """Stop the enhanced agent manager and all components"""
+        """✅ ENHANCED: Stop the enhanced agent manager and all components"""
         try:
-            self.logger.info("🛑 Stopping Enhanced Linux Agent Manager...")
+            self.logger.info("🛑 Stopping Enhanced Linux Agent Manager with Alert Processing...")
             self.is_running = False
             self.is_monitoring = False
             
-            # 🚀 NEW: Stop realtime logging components first
-            await self._stop_realtime_components()
+            # ✅ ENHANCED: Stop alert polling
+            if self.communication and hasattr(self.communication, 'stop_alert_polling'):
+                await self.communication.stop_alert_polling()
+                self.logger.info("✅ Alert polling stopped")
             
             # Stop all collectors
             if self.collectors:
@@ -1226,7 +1170,7 @@ class LinuxAgentManager:
                 except Exception as e:
                     self.logger.error(f"❌ Error stopping event processor: {e}")
             
-            # Close communication (includes stopping log streaming)
+            # Close communication (includes stopping alert polling)
             if self.communication:
                 try:
                     await self.communication.close()
@@ -1234,30 +1178,18 @@ class LinuxAgentManager:
                 except Exception as e:
                     self.logger.error(f"❌ Error closing communication: {e}")
             
+            # ✅ ENHANCED: Log final alert statistics
+            if self.alert_stats['total_alerts_received'] > 0:
+                self.logger.info("🚨 Final Alert Statistics:")
+                self.logger.info(f"   📥 Total Alerts: {self.alert_stats['total_alerts_received']}")
+                self.logger.info(f"   🔴 Critical: {self.alert_stats['critical_alerts']}")
+                self.logger.info(f"   🟠 High: {self.alert_stats['high_alerts']}")
+                self.logger.info(f"   ❌ Errors: {self.alert_stats['alert_processing_errors']}")
+            
             self.logger.info("✅ Enhanced Linux Agent Manager stopped successfully")
             
         except Exception as e:
             self.logger.error(f"❌ Error stopping enhanced agent manager: {e}")
-    
-    async def _stop_realtime_components(self):
-        """🚀 NEW: Stop realtime logging components"""
-        try:
-            self.logger.info("🛑 Stopping realtime logging components...")
-            
-            # Stop realtime log monitor
-            await self.realtime_log_monitor.stop()
-            
-            # Stop thread log tracker
-            await self.thread_log_tracker.stop()
-            
-            # Update health status
-            self.health_checks['realtime_logging'] = False
-            self.health_checks['log_streaming'] = False
-            
-            self.logger.info("✅ Realtime logging components stopped")
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error stopping realtime components: {e}")
     
     def _get_collector_status(self) -> Dict[str, Any]:
         """Get status of all collectors"""
@@ -1283,7 +1215,7 @@ class LinuxAgentManager:
         return status
     
     async def send_heartbeat(self):
-        """Send heartbeat to server"""
+        """✅ ENHANCED: Send heartbeat to server with alert processing info"""
         try:
             if not self.is_registered or not self.agent_id:
                 self.logger.debug("Skipping heartbeat - agent not registered")
@@ -1294,33 +1226,46 @@ class LinuxAgentManager:
             memory = psutil.virtual_memory()
             disk = psutil.disk_usage('/')
             
-            # Create heartbeat data - FIXED: Remove event_count parameter
+            # ✅ ENHANCED: Create heartbeat data with alert info
             heartbeat_data = AgentHeartbeatData(
                 agent_id=self.agent_id,
-                hostname=self.system_info['hostname'],  # Add hostname field
-                timestamp=datetime.now().isoformat(),  # Use string timestamp instead of datetime object
+                hostname=self.system_info['hostname'],
+                timestamp=datetime.now().isoformat(),
                 status="Active",
                 cpu_usage=cpu_usage,
                 memory_usage=memory.percent,
                 disk_usage=disk.percent,
                 uptime=time.time() - psutil.boot_time(),
-                events_sent=self.performance_stats.get('events_processed', 0),  # Use events_sent instead
+                events_sent=self.performance_stats.get('events_processed', 0),
                 collector_status=self._get_collector_status()
             )
+            
+            # ✅ ENHANCED: Add alert processing info to metadata
+            if hasattr(heartbeat_data, 'metadata') and heartbeat_data.metadata:
+                heartbeat_data.metadata.update({
+                    'alert_processing': {
+                        'handler_registered': self.alert_handler_registered,
+                        'total_alerts_received': self.alert_stats['total_alerts_received'],
+                        'critical_alerts': self.alert_stats['critical_alerts'],
+                        'processing_errors': self.alert_stats['alert_processing_errors'],
+                        'notifier_available': bool(self.security_notifier),
+                        'last_alert_time': self.alert_stats['last_alert_time'].isoformat() if self.alert_stats['last_alert_time'] else None
+                    }
+                })
             
             # Send heartbeat
             if self.communication:
                 await self.communication.send_heartbeat(heartbeat_data)
                 self.last_heartbeat = datetime.now()
-                self.logger.debug(f"💓 Heartbeat sent - CPU: {cpu_usage:.1f}%, Memory: {memory.percent:.1f}%")
+                self.logger.debug(f"💓 Enhanced heartbeat sent - CPU: {cpu_usage:.1f}%, Memory: {memory.percent:.1f}%, Alerts: {self.alert_stats['total_alerts_received']}")
             
         except Exception as e:
-            self.logger.error(f"❌ Error sending heartbeat: {e}")
+            self.logger.error(f"❌ Error sending enhanced heartbeat: {e}")
     
     async def pause(self):
         """Pause the agent manager"""
         try:
-            self.logger.info("⏸️ Pausing Linux Agent Manager...")
+            self.logger.info("⏸️ Pausing Enhanced Linux Agent Manager...")
             self.is_paused = True
             
             # Pause collectors
@@ -1332,7 +1277,7 @@ class LinuxAgentManager:
                 except Exception as e:
                     self.logger.error(f"❌ Error pausing {name} collector: {e}")
             
-            self.logger.info("✅ Linux Agent Manager paused")
+            self.logger.info("✅ Enhanced Linux Agent Manager paused")
             
         except Exception as e:
             self.logger.error(f"❌ Error pausing agent manager: {e}")
@@ -1340,7 +1285,7 @@ class LinuxAgentManager:
     async def resume(self):
         """Resume the agent manager"""
         try:
-            self.logger.info("▶️ Resuming Linux Agent Manager...")
+            self.logger.info("▶️ Resuming Enhanced Linux Agent Manager...")
             self.is_paused = False
             
             # Resume collectors
@@ -1352,7 +1297,7 @@ class LinuxAgentManager:
                 except Exception as e:
                     self.logger.error(f"❌ Error resuming {name} collector: {e}")
             
-            self.logger.info("✅ Linux Agent Manager resumed")
+            self.logger.info("✅ Enhanced Linux Agent Manager resumed")
             
         except Exception as e:
             self.logger.error(f"❌ Error resuming agent manager: {e}")
@@ -1365,68 +1310,14 @@ class LinuxAgentManager:
         """Get current health status"""
         return self.health_checks.copy()
     
-    async def _realtime_logging_monitor(self):
-        """🚀 NEW: Monitor realtime logging performance"""
-        try:
-            while self.is_running and not self.is_paused:
-                try:
-                    # Check realtime logging health
-                    if self.communication:
-                        # Get realtime stats
-                        realtime_stats = self.communication.get_realtime_stats() if hasattr(self.communication, 'get_realtime_stats') else {}
-                        
-                        # Update performance stats
-                        self.performance_stats['logs_sent'] = realtime_stats.get('logs_sent', 0)
-                        self.performance_stats['logs_failed'] = realtime_stats.get('logs_failed', 0)
-                        self.performance_stats['realtime_streams_active'] = realtime_stats.get('active_senders', 0)
-                        
-                        # Check for issues
-                        if realtime_stats.get('logs_failed', 0) > 100:
-                            self.logger.warning(f"⚠️ High log failure rate: {realtime_stats.get('logs_failed', 0)} failed logs")
-                            self.health_checks['log_streaming'] = False
-                        else:
-                            self.health_checks['log_streaming'] = True
-                        
-                        # Check queue sizes
-                        queue_size = realtime_stats.get('queue_size', 0)
-                        if queue_size > 1500:  # 75% of buffer
-                            self.logger.warning(f"⚠️ High log queue size: {queue_size}")
-                        
-                        # Log statistics every 5 minutes
-                        if int(time.time()) % 300 == 0:
-                            self.logger.info("🚀 Realtime Logging Stats:")
-                            self.logger.info(f"   📤 Logs Sent: {realtime_stats.get('logs_sent', 0)}")
-                            self.logger.info(f"   ❌ Logs Failed: {realtime_stats.get('logs_failed', 0)}")
-                            self.logger.info(f"   🔄 Active Senders: {realtime_stats.get('active_senders', 0)}")
-                            self.logger.info(f"   📊 Queue Size: {realtime_stats.get('queue_size', 0)}")
-                    
-                    await asyncio.sleep(30)  # Check every 30 seconds
-                    
-                except Exception as e:
-                    self.logger.error(f"❌ Realtime logging monitoring error: {e}")
-                    await asyncio.sleep(30)
-                    
-        except Exception as e:
-            self.logger.error(f"❌ Realtime logging monitor failed: {e}")
-    
-    async def send_realtime_log(self, level: str, message: str, category: str = "general"):
-        """🚀 NEW: Send realtime log entry"""
-        try:
-            if self.communication and hasattr(self.communication, 'add_log_entry'):
-                await self.communication.add_log_entry(
-                    level=level,
-                    message=message,
-                    category=category,
-                    thread_name=threading.current_thread().name,
-                    logger_name='agent_manager'
-                )
-        except Exception as e:
-            self.logger.error(f"❌ Error sending realtime log: {e}")
+    def get_alert_stats(self) -> Dict[str, Any]:
+        """✅ ENHANCED: Get alert processing statistics"""
+        return self.alert_stats.copy()
     
     def get_enhanced_status(self) -> Dict[str, Any]:
-        """Get enhanced agent status with realtime logging metrics"""
+        """✅ ENHANCED: Get enhanced agent status with alert processing metrics"""
         status = {
-            'agent_type': 'linux_enhanced',
+            'agent_type': 'linux_enhanced_with_alerts',
             'agent_id': self.agent_id,
             'is_initialized': self.is_initialized,
             'is_running': self.is_running,
@@ -1443,12 +1334,18 @@ class LinuxAgentManager:
             # Enhanced metrics
             'performance_stats': self.performance_stats,
             'health_checks': self.health_checks,
-            'realtime_logging_enabled': self.config.get('agent', {}).get('enable_realtime_logs', False),
-            'version': '2.1.0-Enhanced-Realtime'
+            # ✅ ENHANCED: Alert processing status
+            'alert_processing': {
+                'enabled': True,
+                'handler_registered': self.alert_handler_registered,
+                'notifier_available': bool(self.security_notifier),
+                'statistics': self.alert_stats,
+                'notifier_status': self.security_notifier.get_stats() if self.security_notifier else None
+            },
+            'version': '2.1.0-Enhanced-Alerts'
         }
         
-        # 🚀 NEW: Add realtime logging specific status
-        if self.communication and hasattr(self.communication, 'get_realtime_stats'):
-            status['realtime_stats'] = self.communication.get_realtime_stats()
-        
-        return status 
+        return status
+
+# Backward compatibility alias
+LinuxAgentManager = EnhancedLinuxAgentManager

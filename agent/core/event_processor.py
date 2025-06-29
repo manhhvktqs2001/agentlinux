@@ -164,7 +164,9 @@ class EventProcessor:
     async def add_event(self, event_data: EventData):
         """✅ REALTIME: Add event and send immediately"""
         try:
-            self.logger.info(f"📥 Event processor received event: {event_data.process_name}")
+            # ✅ FIXED: Better logging that handles None process_name
+            event_identifier = self._get_event_identifier(event_data)
+            self.logger.info(f"📥 Event processor received event: {event_identifier}")
             
             # Set agent_id if not present
             if self.agent_id and not event_data.agent_id:
@@ -177,43 +179,79 @@ class EventProcessor:
             # ✅ REALTIME: Send event immediately instead of queuing
             if not self.shutdown_event.is_set():
                 try:
-                    self.logger.info(f"🚀 Sending event immediately: {event_data.process_name}")
+                    self.logger.info(f"🚀 Sending event immediately: {event_identifier}")
                     # Send event immediately to server
                     success = await self._send_event_immediately(event_data)
                     
                     if success:
                         self.stats.events_sent += 1
-                        self.logger.info(f"✅ Event sent successfully: {event_data.process_name}")
+                        self.logger.info(f"✅ Event sent successfully: {event_identifier}")
                     else:
                         self.stats.events_failed += 1
-                        self.logger.warning(f"⚠️ Failed to send event: {event_data.process_name}")
+                        self.logger.warning(f"⚠️ Failed to send event: {event_identifier}")
                     
                 except Exception as e:
                     self.logger.error(f"❌ Error sending event immediately: {e}")
                     self.stats.events_failed += 1
             else:
-                self.logger.warning(f"⚠️ Shutdown in progress, dropping event: {event_data.process_name}")
+                self.logger.warning(f"⚠️ Shutdown in progress, dropping event: {event_identifier}")
             
         except Exception as e:
             self.logger.error(f"❌ Error adding event: {e}")
             import traceback
             self.logger.error(f"❌ Traceback: {traceback.format_exc()}")
     
+    def _get_event_identifier(self, event_data: EventData) -> str:
+        """✅ NEW: Get meaningful event identifier for logging"""
+        try:
+            # For process events, use process name
+            if event_data.process_name:
+                return event_data.process_name
+            
+            # For file events, use file name
+            if event_data.file_name:
+                return f"File:{event_data.file_name}"
+            
+            # For network events, use destination IP
+            if event_data.destination_ip:
+                return f"Network:{event_data.destination_ip}"
+            
+            # For authentication events, use login user
+            if event_data.login_user:
+                return f"Auth:{event_data.login_user}"
+            
+            # For system events, use description or event action
+            if event_data.description:
+                # Extract meaningful part from description
+                desc = event_data.description
+                if ":" in desc:
+                    return desc.split(":", 1)[1].strip()[:80]  # First 80 chars after colon
+                return desc[:80]  # First 80 chars
+            
+            # Fallback to event type and action
+            return f"{event_data.event_type}:{event_data.event_action}"
+            
+        except Exception as e:
+            self.logger.debug(f"Error getting event identifier: {e}")
+            return f"{event_data.event_type}:{event_data.event_action}"
+    
     async def _send_event_immediately(self, event_data: EventData) -> bool:
         """✅ REALTIME: Send single event immediately to server"""
         try:
-            self.logger.info(f"🌐 Attempting to send event to server: {event_data.process_name}")
+            # ✅ FIXED: Better logging that handles None process_name
+            event_identifier = self._get_event_identifier(event_data)
+            self.logger.info(f"🌐 Attempting to send event to server: {event_identifier}")
             
             if not self.communication:
                 self.logger.error("❌ No communication available")
                 return False
             
-            self.logger.info(f"📡 Communication found, submitting event: {event_data.process_name}")
+            self.logger.info(f"📡 Communication found, submitting event: {event_identifier}")
             # Send event immediately
             success, response, error = await self.communication.submit_event(event_data)
             
             if success:
-                self.logger.info(f"✅ Event submitted successfully to server: {event_data.process_name}")
+                self.logger.info(f"✅ Event submitted successfully to server: {event_identifier}")
                 return True
             else:
                 self.logger.warning(f"⚠️ Event submission failed: {error}")

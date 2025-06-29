@@ -27,7 +27,7 @@ if str(agent_dir) not in sys.path:
     sys.path.insert(0, str(agent_dir))
 
 def setup_production_logging(debug_mode: bool = False):
-    """🐧 Setup production-grade logging for Linux EDR Agent"""
+    """🐧 Setup production-grade logging for Linux EDR Agent with thread safety"""
     log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     
     # Create logs directory with proper permissions
@@ -40,12 +40,13 @@ def setup_production_logging(debug_mode: bool = False):
         # Configure log level
         log_level = logging.DEBUG if debug_mode else logging.INFO
         
-        # Main log file with rotation
+        # FIXED: Use thread-safe handlers
         main_handler = RotatingFileHandler(
             log_dir / 'linux_edr_agent.log',
             maxBytes=50*1024*1024,  # 50MB
             backupCount=5,
-            encoding='utf-8'
+            encoding='utf-8',
+            delay=True  # FIXED: Delay file opening to avoid reentrant issues
         )
         main_handler.setLevel(log_level)
         
@@ -54,7 +55,8 @@ def setup_production_logging(debug_mode: bool = False):
             log_dir / 'linux_edr_errors.log',
             maxBytes=20*1024*1024,  # 20MB
             backupCount=3,
-            encoding='utf-8'
+            encoding='utf-8',
+            delay=True  # FIXED: Delay file opening
         )
         error_handler.setLevel(logging.ERROR)
         
@@ -70,11 +72,18 @@ def setup_production_logging(debug_mode: bool = False):
         error_handler.setFormatter(formatter)
         console_handler.setFormatter(logging.Formatter(log_format))
         
-        # Configure root logger
-        logging.basicConfig(
-            level=log_level,
-            handlers=[main_handler, error_handler, console_handler]
-        )
+        # FIXED: Configure root logger with thread safety
+        root_logger = logging.getLogger()
+        root_logger.setLevel(log_level)
+        
+        # Clear existing handlers to avoid duplicates
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+        
+        # Add new handlers
+        root_logger.addHandler(main_handler)
+        root_logger.addHandler(error_handler)
+        root_logger.addHandler(console_handler)
         
         # Reduce noise from external libraries
         for noisy_logger in ['urllib3', 'aiohttp', 'asyncio', 'requests']:
@@ -377,63 +386,46 @@ class LinuxEDRAgent:
             raise
     
     async def stop(self):
-        """🛑 FIXED: Stop the Linux EDR Agent gracefully with proper task cleanup"""
+        """🛑 FIXED: Graceful shutdown with proper cleanup"""
+        if not self.is_running:
+            return
+        
         try:
-            if self.shutdown_requested:
-                return  # Already stopping
-                
-            self.logger.info("🛑 Stopping Linux EDR Agent...")
-            self.shutdown_requested = True
+            # FIXED: Use print for shutdown messages to avoid logging conflicts
+            print("🛑 Shutdown event received")
+            
             self.is_running = False
+            self.shutdown_requested = True
             
-            # FIXED: Cancel all monitoring tasks first
-            if self.monitoring_tasks:
-                self.logger.info("🛑 Cancelling monitoring tasks...")
-                for task in self.monitoring_tasks:
-                    if not task.done():
-                        task.cancel()
-                
-                # Wait for tasks to complete with timeout
-                try:
-                    await asyncio.wait_for(
-                        asyncio.gather(*self.monitoring_tasks, return_exceptions=True),
-                        timeout=10
-                    )
-                    self.logger.info("✅ Monitoring tasks cancelled")
-                except asyncio.TimeoutError:
-                    self.logger.warning("⚠️ Some monitoring tasks did not stop in time")
-                except Exception as e:
-                    self.logger.error(f"❌ Error cancelling monitoring tasks: {e}")
+            # Signal shutdown event
+            if not self.shutdown_event.is_set():
+                self.shutdown_event.set()
             
-            # Stop agent manager
+            # Cancel monitoring tasks
+            for task in self.monitoring_tasks:
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+            
+            # Stop agent manager if available
             if self.agent_manager:
-                self.logger.info("🛑 Stopping agent manager...")
                 try:
-                    await asyncio.wait_for(self.agent_manager.stop(), timeout=15)
-                    self.logger.info("✅ Agent manager stopped")
-                except asyncio.TimeoutError:
-                    self.logger.warning("⚠️ Agent manager stop timeout - forcing stop")
+                    await self.agent_manager.stop()
                 except Exception as e:
-                    self.logger.error(f"❌ Error stopping agent manager: {e}")
+                    print(f"⚠️ Error stopping agent manager: {e}")
             
-            # Calculate final statistics
-            if self.start_time:
-                uptime = (datetime.now() - self.start_time).total_seconds()
-                self.performance_stats['uptime_seconds'] = uptime
-                
-                self.logger.info("📊 Final Statistics:")
-                self.logger.info(f"   ⏱️ Uptime: {uptime:.1f}s ({uptime/3600:.2f}h)")
-                self.logger.info(f"   💾 Peak Memory: {self.performance_stats['memory_usage_mb']:.1f}MB")
-                self.logger.info(f"   🔄 Peak CPU: {self.performance_stats['cpu_usage_percent']:.1f}%")
+            # Clear tasks
+            self.monitoring_tasks.clear()
             
-            # Signal shutdown complete
-            self.shutdown_event.set()
-            
-            self.logger.info("✅ Linux EDR Agent stopped successfully")
+            print("👋 Linux EDR Agent terminated")
             
         except Exception as e:
-            self.logger.error(f"❌ Stop error: {e}")
-            self.shutdown_event.set()
+            print(f"❌ Error during shutdown: {e}")
+        finally:
+            self.is_running = False
     
     async def _performance_monitor(self):
         """📊 Monitor agent performance continuously"""
@@ -498,9 +490,11 @@ class LinuxEDRAgent:
             await self.stop()
     
     def signal_handler(self, signum, frame):
-        """🔔 FIXED: Handle system signals with proper shutdown coordination"""
+        """🔔 FIXED: Handle system signals with thread-safe shutdown coordination"""
         signal_name = signal.Signals(signum).name
-        self.logger.info(f"🛑 Received signal {signal_name} ({signum}) - initiating graceful shutdown...")
+        
+        # FIXED: Use print instead of logger to avoid reentrant issues
+        print(f"\n🛑 Received signal {signal_name} ({signum}) - initiating graceful shutdown...")
         
         if signum in [signal.SIGINT, signal.SIGTERM]:
             # FIXED: Only set shutdown flags, don't create new tasks
@@ -517,7 +511,7 @@ class LinuxEDRAgent:
                 import time
                 time.sleep(5)
                 if self.is_running:
-                    self.logger.error("🛑 Force exit after 5 seconds")
+                    print("🛑 Force exit after 5 seconds")
                     os._exit(1)
             
             # Start force exit thread
@@ -612,21 +606,25 @@ async def main():
         await agent.start()
         
     except KeyboardInterrupt:
-        logger.info("🛑 Keyboard interrupt received")
+        print("\n🛑 Keyboard interrupt received")
         if agent:
             await agent.stop()
     except Exception as e:
-        logger.error(f"❌ Fatal error: {e}")
+        print(f"❌ Fatal error: {e}")
         if agent:
             await agent.stop()
         sys.exit(1)
     finally:
-        # FIXED: Ensure cleanup happens
+        # FIXED: Ensure cleanup happens without logging
         if agent and agent.is_running:
-            logger.info("🛑 Ensuring agent cleanup...")
-            await agent.stop()
+            print("🛑 Ensuring agent cleanup...")
+            try:
+                await agent.stop()
+            except Exception as e:
+                print(f"⚠️ Cleanup error: {e}")
         
-        logger.info("👋 Linux EDR Agent terminated")
+        # FIXED: Final message without logger
+        print("👋 Linux EDR Agent terminated")
 
 if __name__ == "__main__":
     try:
