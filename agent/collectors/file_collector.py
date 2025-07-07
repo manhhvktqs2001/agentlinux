@@ -16,63 +16,88 @@ from collections import defaultdict
 
 # Try to import inotify
 try:
-    from watchdog.observers import Observer
-    from watchdog.events import FileSystemEventHandler, FileSystemEvent
+    from watchdog.observers import Observer as WatchdogObserver
+    from watchdog.events import FileSystemEventHandler as WatchdogFileSystemEventHandler, FileSystemEvent
     WATCHDOG_AVAILABLE = True
 except ImportError:
     WATCHDOG_AVAILABLE = False
-    Observer = None
-    FileSystemEventHandler = None
+    WatchdogObserver = None
+    WatchdogFileSystemEventHandler = None
+    FileSystemEvent = None
+
+# Dummy base classes for fallback
+class DummyFileSystemEventHandler(object):
+    pass
+class DummyObserver(object):
+    @staticmethod
+    def start(): pass
+    @staticmethod
+    def stop(): pass
+    @staticmethod
+    def join(timeout=None): pass
+    @staticmethod
+    def schedule(*args, **kwargs): pass
+
+# Always assign base classes (ensure never None and always a class)
+def _get_valid_base_handler():
+    if WATCHDOG_AVAILABLE and isinstance(WatchdogFileSystemEventHandler, type):
+        return WatchdogFileSystemEventHandler
+    return DummyFileSystemEventHandler
+FileSystemEventHandler = _get_valid_base_handler()
+
+if WATCHDOG_AVAILABLE and WatchdogObserver is not None:
+    Observer = WatchdogObserver
+else:
+    Observer = DummyObserver
 
 from agent.collectors.base_collector import LinuxBaseCollector
 from agent.schemas.events import EventData
 
-class LinuxFileEventHandler(FileSystemEventHandler):
+# Simple file event handler class
+class LinuxFileEventHandler:
     """Linux file system event handler using inotify - FIXED VERSION"""
-    
     def __init__(self, collector, loop):
-        super().__init__()
         self.collector = collector
         self.logger = collector.logger
         self.loop = loop
-    
+        
     def on_modified(self, event):
         """Handle file modification events"""
         if not event.is_directory:
             try:
                 if self.loop.is_running():
                     asyncio.run_coroutine_threadsafe(
-                        self.collector._handle_file_event('modified', event.src_path), 
+                        self.collector._handle_file_event('modified', event.src_path, ""),
                         self.loop
                     )
             except Exception as e:
                 self.logger.error(f"❌ File event handling error: {e}")
-    
+                
     def on_created(self, event):
         """Handle file creation events"""
         if not event.is_directory:
             try:
                 if self.loop.is_running():
                     asyncio.run_coroutine_threadsafe(
-                        self.collector._handle_file_event('created', event.src_path), 
+                        self.collector._handle_file_event('created', event.src_path, ""),
                         self.loop
                     )
             except Exception as e:
                 self.logger.error(f"❌ File event handling error: {e}")
-    
+                
     def on_deleted(self, event):
         """Handle file deletion events"""
         if not event.is_directory:
             try:
                 if self.loop.is_running():
                     asyncio.run_coroutine_threadsafe(
-                        self.collector._handle_file_event('deleted', event.src_path), 
+                        self.collector._handle_file_event('deleted', event.src_path, ""),
                         self.loop
                     )
             except Exception as e:
                 self.logger.error(f"❌ File event handling error: {e}")
-    
-    def on_moved(self, event: FileSystemEvent):
+                
+    def on_moved(self, event):
         """Handle file move events"""
         if not event.is_directory:
             try:
@@ -83,6 +108,7 @@ class LinuxFileEventHandler(FileSystemEventHandler):
                     )
             except Exception as e:
                 self.logger.error(f"❌ File move event handling error: {e}")
+
 
 class LinuxFileCollector(LinuxBaseCollector):
     """Linux File Collector with inotify support - FIXED VERSION"""
@@ -162,18 +188,24 @@ class LinuxFileCollector(LinuxBaseCollector):
             self.loop = asyncio.get_running_loop()
         except RuntimeError:
             self.loop = asyncio.get_event_loop()
+        
+        self._tasks = []  # Quản lý các task async
     
     def _check_inotify_support(self) -> bool:
         """Check if inotify is supported on this system"""
         try:
             if not WATCHDOG_AVAILABLE:
                 return False
-            
             # Try to create a temporary observer
-            test_observer = Observer()
-            test_observer.start()
-            test_observer.stop()
-            test_observer.join(timeout=1)
+            if Observer is DummyObserver:
+                Observer.start()
+                Observer.stop()
+                Observer.join(timeout=1)
+            else:
+                test_observer = Observer()
+                test_observer.start()
+                test_observer.stop()
+                test_observer.join(timeout=1)
             return True
         except Exception as e:
             self.logger.warning(f"⚠️ inotify support check failed: {e}")
@@ -212,33 +244,35 @@ class LinuxFileCollector(LinuxBaseCollector):
     async def start(self):
         """Start Linux file monitoring with inotify"""
         await super().start()
-        
         if self.inotify_enabled:
             try:
                 # Setup inotify monitoring
-                self.observer = Observer()
+                if Observer is DummyObserver:
+                    self.observer = Observer
+                else:
+                    self.observer = Observer()
                 self.event_handler = LinuxFileEventHandler(self, self.loop)
-                
                 # Add watches for monitored paths
                 for path in self.monitor_paths:
                     if os.path.exists(path):
                         try:
-                            self.observer.schedule(
-                                self.event_handler,
-                                path,
-                                recursive=True
-                            )
-                            self.logger.debug(f"Added inotify watch: {path}")
+                            if Observer is not DummyObserver:
+                                self.observer.schedule(
+                                    self.event_handler,
+                                    path,
+                                    recursive=True
+                                )
+                                self.logger.debug(f"Added inotify watch: {path}")
                         except Exception as e:
                             self.logger.warning(f"⚠️ Failed to watch {path}: {e}")
-                
-                self.observer.start()
+                if Observer is DummyObserver:
+                    self.observer.start()
+                else:
+                    self.observer.start()
                 self.logger.info("✅ Linux file monitoring started with inotify")
-                
             except Exception as e:
                 self.logger.error(f"❌ Failed to start inotify monitoring: {e}")
                 self.inotify_enabled = False
-        
         if not self.inotify_enabled:
             self.logger.info("📁 Linux file monitoring started with polling")
     
@@ -251,6 +285,13 @@ class LinuxFileCollector(LinuxBaseCollector):
                 self.logger.info("🛑 inotify monitoring stopped")
         except Exception as e:
             self.logger.error(f"❌ Error stopping inotify: {e}")
+        
+        # Cancel và await các task async
+        for task in self._tasks:
+            task.cancel()
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
         
         await super().stop()
     
@@ -292,7 +333,7 @@ class LinuxFileCollector(LinuxBaseCollector):
             self.logger.error(f"❌ File collection failed: {e}")
             return []
     
-    async def _handle_file_event(self, action: str, file_path: str, old_path: str = None):
+    async def _handle_file_event(self, action: str, file_path: str, old_path: str = ""):
         """Handle file system event from inotify - FIXED VERSION"""
         try:
             # ✅ FIXED: Rate limiting to prevent spam
@@ -320,7 +361,9 @@ class LinuxFileCollector(LinuxBaseCollector):
             # Create event with proper validation
             event = await self._create_file_event(action, file_path, old_path)
             if event and event.agent_id:  # FIXED: Validate event has agent_id
-                await self._send_event_immediately(event)
+                # Tạo task gửi event và lưu vào self._tasks
+                send_task = asyncio.create_task(self._send_event_immediately(event))
+                self._tasks.append(send_task)
                 self.stats['inotify_events'] += 1
                 
                 # Update stats by action
@@ -549,7 +592,7 @@ class LinuxFileCollector(LinuxBaseCollector):
         except Exception:
             return False
     
-    async def _create_file_event(self, action: str, file_path: str, old_path: str = None):
+    async def _create_file_event(self, action: str, file_path: str, old_path: str = ""):
         """Create file system event with proper agent_id validation - FIXED"""
         try:
             # FIXED: Validate agent_id is available before creating event
@@ -627,6 +670,24 @@ class LinuxFileCollector(LinuxBaseCollector):
         except Exception as e:
             self.logger.error(f"❌ File event creation failed: {e}")
             return None
+
+    async def _send_event_immediately(self, event: EventData):
+        """✅ REALTIME: Send event immediately to event processor"""
+        try:
+            self.logger.info(f"🔍 Attempting to send file event immediately: {event.file_name}")
+            
+            if self.event_processor:
+                self.logger.info(f"✅ Event processor found, sending file event: {event.file_name}")
+                # Send event directly to event processor for immediate processing
+                await self.event_processor.add_event(event)
+                self.logger.info(f"✅ File event sent immediately: {event.file_name}")
+            else:
+                self.logger.error("❌ No event processor available for immediate sending")
+                self.logger.error(f"❌ Event processor is: {self.event_processor}")
+        except Exception as e:
+            self.logger.error(f"❌ Failed to send file event immediately: {e}")
+            import traceback
+            self.logger.error(f"❌ Traceback: {traceback.format_exc()}")
     
     def _determine_file_severity(self, file_path: str, action: str, file_info: Optional[Dict]) -> str:
         """Determine file event severity"""

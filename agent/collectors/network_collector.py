@@ -24,17 +24,15 @@ class LinuxNetworkCollector(LinuxBaseCollector):
         super().__init__(config_manager, "LinuxNetworkCollector")
         
         # Linux network monitoring settings
-        self.polling_interval = 3.0  # 3 seconds for network monitoring
+        self.polling_interval = 1.0  # 1 second, luôn quét nhanh
         self.max_events_per_batch = 20
         
         # ✅ NEW: Network event filtering configuration
-        linux_config = self.config.get('linux_specific', {})
-        network_filters = linux_config.get('network_event_filters', {})
-        
-        self.exclude_disconnect_events = network_filters.get('exclude_disconnect_events', True)
-        self.exclude_connect_events = network_filters.get('exclude_connect_events', False)
-        self.exclude_listen_events = network_filters.get('exclude_listen_events', False)
-        self.exclude_established_events = network_filters.get('exclude_established_events', True)
+        # Không lọc bất kỳ loại network event nào
+        self.exclude_disconnect_events = False
+        self.exclude_connect_events = False
+        self.exclude_listen_events = False
+        self.exclude_established_events = False
         
         # ✅ NEW: Rate limiting
         self.network_events_this_minute = 0

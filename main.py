@@ -17,6 +17,8 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any
+import socket
+from agent.schemas.agent_data import create_linux_registration_data
 
 # 🔧 Setup Python path for imports
 current_dir = Path(__file__).parent.absolute()
@@ -118,7 +120,7 @@ def check_system_requirements() -> bool:
         
         # Check CPU cores
         cpu_count = psutil.cpu_count()
-        if cpu_count < 1:
+        if cpu_count is None or cpu_count < 1:
             print("❌ At least 1 CPU core required")
             return False
         
@@ -218,31 +220,59 @@ class LinuxEDRAgent:
             'uptime_seconds': 0.0
         }
         
-        # Initialize agent ID
-        self._ensure_agent_id()
-        
         self.logger.info(f"🐧 Linux EDR Agent initialized")
-        self.logger.info(f"   🆔 Agent ID: {self.agent_id[:12]}...")
+        if self.agent_id:
+            self.logger.info(f"   🆔 Agent ID: {self.agent_id[:12]}...")
+        else:
+            self.logger.info(f"   🆔 Agent ID: None")
         self.logger.info(f"   🐞 Debug Mode: {debug_mode}")
         self.logger.info(f"   🏠 Working Directory: {current_dir}")
     
-    def _ensure_agent_id(self):
-        """🔐 Ensure agent has a unique identifier"""
+    async def _ensure_agent_id(self, communication):
+        """🔐 Ensure agent has a unique identifier and is valid on backend"""
         try:
             agent_id_file = current_dir / '.agent_id'
-            
             if agent_id_file.exists():
-                self.agent_id = agent_id_file.read_text().strip()
-                if len(self.agent_id) >= 36:  # Valid UUID length
-                    self.logger.info(f"📄 Loaded existing agent ID from file")
-                    return
-            
-            # Generate new agent ID
-            self.agent_id = str(uuid.uuid4())
-            agent_id_file.write_text(self.agent_id)
-            agent_id_file.chmod(0o600)  # Secure permissions
-            self.logger.info(f"🆔 Generated new agent ID")
-            
+                agent_id = agent_id_file.read_text().strip()
+                if len(agent_id) >= 36:
+                    # Kiểm tra với backend
+                    exists = await communication.check_agent_id_exists(agent_id)
+                    if exists:
+                        self.agent_id = agent_id
+                        self.logger.info("📄 Loaded existing agent ID from file (valid on backend)")
+                        return
+                    else:
+                        self.logger.warning("⚠ Agent ID in file is not valid on backend, re-registering...")
+                        agent_id_file.unlink()
+            # Đăng ký mới
+            # Đăng ký với backend để lấy agent_id mới
+            hostname = platform.node() or "linux-edr-agent"
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                ip_address = s.getsockname()[0]
+                s.close()
+            except:
+                ip_address = "127.0.0.1"
+            registration_data = create_linux_registration_data(hostname, ip_address)
+            reg_result = await communication.register_agent(registration_data)
+            if reg_result.get('success') and reg_result.get('agent_id'):
+                self.agent_id = reg_result['agent_id']
+                agent_id_file.write_text(self.agent_id)
+                agent_id_file.chmod(0o600)
+                self.logger.info(f"🆔 Registered and saved new agent ID: {self.agent_id}")
+                # Cập nhật agent_id cho communication
+                if hasattr(communication, 'set_agent_id'):
+                    communication.set_agent_id(self.agent_id)
+                # Nếu đã có agent_manager, cập nhật agent_id luôn
+                if self.agent_manager:
+                    self.agent_manager.agent_id = self.agent_id
+                # Nếu đã có event_processor, cập nhật agent_id luôn
+                if self.agent_manager and hasattr(self.agent_manager, 'event_processor') and self.agent_manager.event_processor:
+                    self.agent_manager.event_processor.set_agent_id(self.agent_id)
+            else:
+                self.logger.error(f"❌ Failed to register agent with backend: {reg_result.get('error')}")
+                raise Exception("Agent registration failed")
         except Exception as e:
             self.logger.error(f"❌ Error managing agent ID: {e}")
             self.agent_id = str(uuid.uuid4())
@@ -258,6 +288,7 @@ class LinuxEDRAgent:
             try:
                 from agent.core.config_manager import ConfigManager
                 from agent.core.agent_manager import LinuxAgentManager
+                from agent.core.communication import ServerCommunication
                 self.logger.info("✅ Agent modules imported successfully")
             except ImportError as e:
                 self.logger.error(f"❌ Failed to import agent modules: {e}")
@@ -269,6 +300,13 @@ class LinuxEDRAgent:
             self.config_manager = ConfigManager()
             await self.config_manager.load_config()
             
+            # Initialize communication for agent_id check
+            self.communication = ServerCommunication(self.config_manager)
+            await self.communication.initialize()
+            
+            # Kiểm tra và đảm bảo agent_id hợp lệ trên backend
+            await self._ensure_agent_id(self.communication)
+            
             # Apply runtime optimizations
             await self._apply_runtime_optimizations()
             
@@ -277,8 +315,8 @@ class LinuxEDRAgent:
             self.agent_manager = LinuxAgentManager(self.config_manager)
             
             # Set agent ID
-            if hasattr(self.agent_manager, 'agent_id'):
-                self.agent_manager.agent_id = self.agent_id
+            if hasattr(self.agent_manager, 'agent_id') and self.agent_id:
+                self.agent_manager.agent_id = str(self.agent_id)
             
             # Initialize with timeout
             self.logger.info("⏳ Initializing agent components...")
@@ -303,7 +341,10 @@ class LinuxEDRAgent:
             memory = psutil.virtual_memory()
             cpu_count = psutil.cpu_count()
             
-            config = self.config_manager.get_config()
+            if self.config_manager:
+                config = self.config_manager.get_config()
+            else:
+                config = {}
             agent_config = config.get('agent', {})
             
             # Memory-based optimizations
@@ -318,10 +359,10 @@ class LinuxEDRAgent:
                 agent_config['event_queue_size'] = 1000
             
             # CPU-based optimizations
-            if cpu_count < 2:
+            if cpu_count is not None and cpu_count < 2:
                 self.logger.warning("⚠️ Limited CPU - applying CPU optimizations")
                 agent_config['num_workers'] = 1
-            elif cpu_count >= 4:
+            elif cpu_count is not None and cpu_count >= 4:
                 self.logger.info("✅ Multiple CPUs - enabling parallel processing")
                 agent_config['num_workers'] = min(cpu_count, 4)
             

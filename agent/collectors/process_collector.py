@@ -23,16 +23,16 @@ class LinuxProcessCollector(LinuxBaseCollector):
         super().__init__(config_manager, "LinuxProcessCollector")
         
         # ✅ CONTINUOUS REALTIME: Very fast polling
-        self.polling_interval = self.config.get('collection', {}).get('polling_interval', 10)  # 10 seconds
+        self.polling_interval = 2  # 2 seconds, luôn quét nhanh
         self.max_events_per_batch = self.config.get('collection', {}).get('max_events_per_collection', 5)
         
         # ✅ CONTINUOUS REALTIME: No deduplication for realtime streaming
         self.enable_deduplication = self.config.get('collection', {}).get('enable_deduplication', False)
         self.event_dedup_window = self.config.get('collection', {}).get('deduplication_window', 0)
         
-        # ✅ CONTINUOUS REALTIME: Reduced filtering for more events
-        self.min_process_lifetime = self.config.get('linux_specific', {}).get('min_process_lifetime', 5)  # 5 seconds
-        self.exclude_short_lived = self.config.get('linux_specific', {}).get('exclude_short_lived_processes', False)
+        # Không lọc process sống ngắn
+        self.min_process_lifetime = 0
+        self.exclude_short_lived = False
         
         # ✅ CONTINUOUS REALTIME: Higher rate limits
         self.max_events_per_minute = self.config.get('filters', {}).get('max_process_events_per_minute', 100)  # 100 events/minute
@@ -48,17 +48,18 @@ class LinuxProcessCollector(LinuxBaseCollector):
         self.stats = {
             'process_creation_events': 0,
             'process_termination_events': 0,
+            'process_running_events': 0,
             'interesting_process_events': 0,
             'total_process_events': 0,
             'filtered_events': 0,
             'rate_limited_events': 0
         }
         
-        # ✅ CONTINUOUS REALTIME: Reduced exclusions for more events
-        self.excluded_process_names = self.config.get('filters', {}).get('exclude_process_names', [])
-        self.excluded_paths = self.config.get('filters', {}).get('exclude_process_paths', [])
-        self.exclude_kernel_threads = self.config.get('filters', {}).get('exclude_kernel_threads', False)
-        self.exclude_agent_activity = self.config.get('filters', {}).get('exclude_agent_activity', False)
+        # Không loại trừ bất kỳ tiến trình nào
+        self.excluded_process_names = []
+        self.excluded_paths = []
+        self.exclude_kernel_threads = False
+        self.exclude_agent_activity = False
         
         # Interesting processes for security monitoring
         self.interesting_processes = {
@@ -115,7 +116,7 @@ class LinuxProcessCollector(LinuxBaseCollector):
                         
                         current_pids.add(pid)
                         
-                        # Check for new process
+                        # ✅ REALTIME: Check for new process
                         if pid not in self.monitored_processes:
                             # ✅ REALTIME: Additional lifetime check
                             if self._check_process_lifetime(proc_info):
@@ -128,11 +129,23 @@ class LinuxProcessCollector(LinuxBaseCollector):
                                     self._increment_event_count()
                                     
                                     # ✅ REALTIME: Log immediately
-                                    self.logger.info(f"🐧 Linux Process Event: Start - Agent: {self.agent_id[:8]}...")
-                                    
-                                    # ✅ REALTIME: Stop if we hit batch limit
-                                    if len(events) >= self.max_events_per_batch:
-                                        break
+                                    agent_id_short = self.agent_id[:8] if self.agent_id else 'unknown'
+                                    self.logger.info(f"🐧 Linux Process Event: Start - Agent: {agent_id_short}...")
+                        
+                        # ✅ REALTIME: ALWAYS create event for running process (continuous monitoring)
+                        else:
+                            # Create event for existing running process
+                            event = await self._create_process_running_event(proc_info)
+                            if event and self._is_event_worth_sending(event):
+                                # ✅ REALTIME: Send event immediately
+                                await self._send_event_immediately(event)
+                                events.append(event)
+                                self.stats['process_running_events'] += 1
+                                self._increment_event_count()
+                                
+                                # ✅ REALTIME: Log immediately
+                                agent_id_short = self.agent_id[:8] if self.agent_id else 'unknown'
+                                self.logger.info(f"🐧 Linux Process Event: Running - Agent: {agent_id_short}...")
                         
                         # Update tracking with minimal data
                         self.monitored_processes[pid] = {
@@ -140,6 +153,10 @@ class LinuxProcessCollector(LinuxBaseCollector):
                             'create_time': proc_info.get('create_time'),
                             'last_seen': time.time()
                         }
+                        
+                        # ✅ REALTIME: Stop if we hit batch limit
+                        if len(events) >= self.max_events_per_batch:
+                            break
                         
                     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                         continue
@@ -167,7 +184,8 @@ class LinuxProcessCollector(LinuxBaseCollector):
                                 self._increment_event_count()
                                 
                                 # ✅ REALTIME: Log immediately
-                                self.logger.info(f"🐧 Linux Process Event: End - Agent: {self.agent_id[:8]}...")
+                                agent_id_short = self.agent_id[:8] if self.agent_id else 'unknown'
+                                self.logger.info(f"🐧 Linux Process Event: End - Agent: {agent_id_short}...")
                         del self.monitored_processes[pid]
             
             # Update tracking
@@ -446,6 +464,83 @@ class LinuxProcessCollector(LinuxBaseCollector):
             self.logger.error(f"❌ Process end event creation failed: {e}")
             return None
     
+    async def _create_process_running_event(self, proc_info: Dict) -> Optional[EventData]:
+        """✅ REALTIME: Create event for continuously running process"""
+        try:
+            if not self.agent_id:
+                self.logger.error(f"❌ Cannot create process running event - missing agent_id")
+                return None
+            
+            # Extract process information
+            pid = proc_info.get('pid')
+            name = proc_info.get('name', 'Unknown')
+            exe = proc_info.get('exe')
+            cmdline = proc_info.get('cmdline', [])
+            username = proc_info.get('username')
+            ppid = proc_info.get('ppid')
+            cpu_percent = proc_info.get('cpu_percent', 0)
+            memory_info = proc_info.get('memory_info')
+            
+            # Ensure proper data types
+            if pid is not None:
+                pid = int(pid)
+            if ppid is not None:
+                ppid = int(ppid)
+            
+            # Create command line string safely
+            cmdline_str = ""
+            if cmdline and isinstance(cmdline, list):
+                cmdline_str = ' '.join(str(arg) for arg in cmdline[:5])  # Limit to first 5 args
+            elif isinstance(cmdline, str):
+                cmdline_str = cmdline[:200]  # Limit length
+            
+            # Determine severity based on process type
+            severity = "Info"
+            if self._is_interesting_process(name):
+                severity = "Medium"
+            
+            # Create event for running process
+            event = EventData(
+                event_type="Process",
+                event_action="Running",
+                severity=severity,
+                agent_id=self.agent_id,
+                event_timestamp=datetime.now(),
+                
+                process_id=pid,
+                process_name=name,
+                process_path=exe,
+                command_line=cmdline_str,
+                parent_pid=ppid,
+                process_user=username,
+                
+                description=f"Linux Process Running: {name} (PID: {pid})",
+                
+                raw_event_data={
+                    'platform': 'linux',
+                    'process_category': self._get_process_category(name),
+                    'is_interesting': self._is_interesting_process(name),
+                    'create_time': proc_info.get('create_time'),
+                    'monitoring_method': 'continuous_realtime_scan',
+                    'cpu_percent': cpu_percent,
+                    'memory_mb': self._get_memory_mb(memory_info),
+                    'status': proc_info.get('status', 'running'),
+                    'scan_timestamp': time.time()
+                }
+            )
+            
+            # Validate event before returning
+            is_valid, error = event.validate_for_server()
+            if not is_valid:
+                self.logger.error(f"❌ Created invalid process running event: {error}")
+                return None
+            
+            return event
+            
+        except Exception as e:
+            self.logger.error(f"❌ Process running event creation failed: {e}")
+            return None
+    
     def _get_process_category(self, process_name: str) -> str:
         """Get process category"""
         if not process_name:
@@ -491,6 +586,7 @@ class LinuxProcessCollector(LinuxBaseCollector):
             'collector_type': 'Linux_Process_Optimized',
             'process_creation_events': self.stats['process_creation_events'],
             'process_termination_events': self.stats['process_termination_events'],
+            'process_running_events': self.stats['process_running_events'],
             'interesting_process_events': self.stats['interesting_process_events'],
             'total_process_events': self.stats['total_process_events'],
             'filtered_events': self.stats['filtered_events'],
@@ -501,7 +597,7 @@ class LinuxProcessCollector(LinuxBaseCollector):
             'min_process_lifetime': self.min_process_lifetime,
             'max_events_per_minute': self.max_events_per_minute,
             'events_this_minute': self.events_this_minute,
-            'optimization_version': '2.1.0-Optimized'
+            'optimization_version': '2.1.0-ContinuousRealtime'
         })
         return base_stats
 

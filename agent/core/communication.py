@@ -15,8 +15,16 @@ from typing import Dict, List, Optional, Any, Tuple
 from collections import deque
 from dataclasses import dataclass
 from agent.core.config_manager import ConfigManager
-from agent.schemas.agent_data import AgentRegistrationData, AgentHeartbeatData
+from agent.schemas.agent_data import AgentRegistrationData, AgentHeartbeatData, create_linux_registration_data
 from agent.schemas.events import EventData
+import redis
+from agent.utils import process_utils
+import subprocess
+import os
+import signal
+import platform
+import socket
+from pathlib import Path
 
 # ✅ ENHANCED: Security Alert Data Structure
 @dataclass
@@ -79,6 +87,9 @@ class SecurityAlert:
                 timestamp=datetime.now()
             )
 
+# Định nghĩa file agent_id dùng chung
+AGENT_ID_FILE = Path(__file__).parent.parent.parent / '.agent_id'
+
 class ServerCommunication:
     """Enhanced Server Communication với Alert Processing"""
     
@@ -122,6 +133,8 @@ class ServerCommunication:
         
         # Offline event storage
         self.offline_events = []
+        
+        self.has_retried_registration = False  # Thêm biến cờ để tránh lặp đăng ký lại
         
         self.logger.info(f"📡 Enhanced Server Communication initialized")
         self.logger.info(f"   🎯 Server URL: {self.base_url}")
@@ -260,10 +273,12 @@ class ServerCommunication:
             # Send to all registered alert handlers
             for handler in self.alert_handlers:
                 try:
-                    if hasattr(handler, 'handle_security_alert'):
+                    if hasattr(handler, 'handle_security_alert') and asyncio.iscoroutinefunction(handler.handle_security_alert):
                         await handler.handle_security_alert(security_alert)
-                    elif callable(handler):
+                    elif asyncio.iscoroutinefunction(handler):
                         await handler(security_alert)
+                    else:
+                        handler(security_alert)
                 except Exception as e:
                     self.logger.error(f"❌ Alert handler error: {e}")
             
@@ -321,6 +336,9 @@ class ServerCommunication:
                     url = f"{self.base_url}{endpoint}"
                     self.logger.debug(f"🔍 Trying endpoint: {url}")
                     
+                    if not self.session:
+                        self.logger.error("❌ No HTTP session available for test_server_connection")
+                        return False
                     async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as response:
                         if response.status in [200, 404]:
                             self.is_connected = True
@@ -375,7 +393,12 @@ class ServerCommunication:
                 agent_id = response.get('agent_id')
                 if agent_id:
                     self.set_agent_id(agent_id)
-                    # Start alert polling after registration
+                    # Lưu agent_id mới vào file
+                    try:
+                        AGENT_ID_FILE.write_text(str(agent_id))
+                        self.logger.info(f"✅ Đã lưu agent_id mới vào file (register_agent)")
+                    except Exception as e:
+                        self.logger.error(f"❌ Không thể lưu agent_id mới (register_agent): {e}")
                     await self.start_alert_polling()
                 return response
             else:
@@ -404,30 +427,122 @@ class ServerCommunication:
             self.logger.error(f"❌ Heartbeat failed: {e}")
             return False
     
-    async def submit_event(self, event_data: EventData) -> Tuple[bool, Optional[Dict], Optional[str]]:
-        """Submit single event"""
+    async def check_health(self) -> bool:
+        """Check server health before sending event"""
         try:
-            if self.offline_mode:
-                self.offline_events.append(event_data)
-                return False, None, "Offline mode"
-            
-            url = f"{self.base_url}/api/v1/events/submit"
-            
-            # Convert event to dict
-            event_dict = event_data.to_dict()
-            if 'error' in event_dict:
-                return False, None, f"Event validation error: {event_dict['error']}"
-            
-            response = await self._make_request('POST', url, event_dict)
-            
-            if response and response.get('success'):
-                return True, response, None
-            else:
-                error_msg = response.get('error', 'Unknown error') if response else 'No response'
-                return False, response, error_msg
-                
+            url = f"{self.base_url}/api/v1/health/check"
+            if not self.session:
+                self.logger.error("❌ No HTTP session available for check_health")
+                return False
+            async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    return True
+                return False
         except Exception as e:
-            return False, None, str(e)
+            self.logger.warning(f"Health check failed: {e}")
+            return False
+
+    async def submit_event(self, event_data: EventData) -> Tuple[bool, Optional[Dict], Optional[str]]:
+        """Submit single event, chỉ gửi khi health check thành công, tự động retry khi offline và tự động đăng ký lại nếu agent not found"""
+        retry_interval = 5
+        max_retry = None  # Không giới hạn số lần thử lại
+        retry_count = 0
+        was_offline = self.offline_mode
+        while True:
+            try:
+                if self.offline_mode:
+                    self.logger.warning("⚠ Offline mode, thử reconnect...")
+                    # Thử reconnect bằng cách test kết nối server
+                    try:
+                        await self.test_server_connection()
+                        if not self.offline_mode:
+                            self.logger.info("✅ Đã reconnect thành công!")
+                            # Sau khi reconnect, gửi lại toàn bộ event offline
+                            if self.offline_events:
+                                self.logger.info(f"📤 Đang gửi lại {len(self.offline_events)} event offline sau khi reconnect...")
+                                offline_events_copy = self.offline_events.copy()
+                                self.offline_events.clear()
+                                for offline_event in offline_events_copy:
+                                    await self.submit_event(offline_event)
+                        else:
+                            await asyncio.sleep(retry_interval)
+                            continue
+                    except Exception:
+                        await asyncio.sleep(retry_interval)
+                        continue
+                # Thêm health check trước khi gửi event
+                health_ok = await self.check_health()
+                if not health_ok:
+                    self.logger.warning("⚠ Health check failed, retrying in 5s...")
+                    await asyncio.sleep(retry_interval)
+                    continue
+                url = f"{self.base_url}/api/v1/events/submit"
+                event_dict = event_data.to_dict()
+                if 'error' in event_dict:
+                    return False, None, f"Event validation error: {event_dict['error']}"
+                response = await self._make_request('POST', url, event_dict)
+                # --- PATCH: Tự động đăng ký lại nếu agent not found ---
+                if response and not response.get('success') and response.get('error'):
+                    error_msg = response.get('error', '')
+                    if 'Agent' in error_msg and 'not found' in error_msg:
+                        if self.has_retried_registration:
+                            self.logger.error("❌ Đã thử đăng ký lại agent nhưng vẫn không thành công. Dừng agent.")
+                            import sys
+                            sys.exit("Agent registration failed. Please check backend or contact admin.")
+                        self.has_retried_registration = True
+                        self.logger.warning("⚠ Agent not found trên backend, thực hiện đăng ký lại...")
+                        # Xóa file agent_id cũ nếu có
+                        try:
+                            if AGENT_ID_FILE.exists():
+                                AGENT_ID_FILE.unlink()
+                                self.logger.info("🗑️ Đã xóa file agent_id cũ")
+                        except Exception as e:
+                            self.logger.error(f"❌ Không thể xóa file agent_id: {e}")
+                        # Lấy hostname và ip_address
+                        hostname = platform.node() or "linux-edr-agent"
+                        try:
+                            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                            s.connect(("8.8.8.8", 80))
+                            ip_address = s.getsockname()[0]
+                            s.close()
+                        except:
+                            ip_address = "127.0.0.1"
+                        registration_data = create_linux_registration_data(hostname, ip_address)
+                        reg_result = await self.register_agent(registration_data)
+                        if reg_result.get('success'):
+                            # Lưu agent_id mới vào file
+                            try:
+                                if self.agent_id:
+                                    AGENT_ID_FILE.write_text(str(self.agent_id))
+                                    self.logger.info("✅ Đã lưu agent_id mới vào file")
+                                else:
+                                    self.logger.warning("⚠ Không có agent_id mới để lưu vào file")
+                            except Exception as e:
+                                self.logger.error(f"❌ Không thể lưu agent_id mới: {e}")
+                            self.logger.info("✅ Đăng ký lại agent thành công, cần khởi động lại agent để đồng bộ agent_id mới.")
+                            import sys
+                            sys.exit("Agent ID changed. Please restart the agent to synchronize the new agent_id.")
+                        else:
+                            self.logger.error(f"❌ Đăng ký lại agent thất bại: {reg_result.get('error')}")
+                            import sys
+                            sys.exit("Agent registration failed. Please check backend or contact admin.")
+                        continue  # Thử lại vòng lặp
+                # --- END PATCH ---
+                if response and response.get('success'):
+                    return True, response, None
+                else:
+                    error_msg = response.get('error', 'Unknown error') if response else 'No response'
+                    self.logger.warning(f"⚠ Gửi event thất bại: {error_msg}, thử lại sau {retry_interval}s")
+                    await asyncio.sleep(retry_interval)
+                    retry_count += 1
+                    if max_retry and retry_count >= max_retry:
+                        return False, response, error_msg
+            except Exception as e:
+                self.logger.warning(f"⚠ Lỗi gửi event: {e}, thử lại sau {retry_interval}s")
+                await asyncio.sleep(retry_interval)
+                retry_count += 1
+                if max_retry and retry_count >= max_retry:
+                    return False, None, str(e)
     
     async def submit_event_batch(self, events: List[EventData]) -> Tuple[bool, Optional[Dict], Optional[str]]:
         """Submit event batch with fallback to individual submission"""
@@ -568,3 +683,41 @@ class ServerCommunication:
             'alert_polling_interval': self.alert_polling_interval,
             'agent_id': self.agent_id[:12] + '...' if self.agent_id else None
         }
+
+    async def get_pending_alerts(self, agent_id: Optional[str] = None) -> Optional[Dict]:
+        """Get pending alert notifications from server (giống agent Windows)"""
+        try:
+            if self.offline_mode:
+                return None
+            if agent_id is None:
+                agent_id = self.agent_id
+            url = f"{self.base_url}/api/v1/agents/{agent_id}/pending-alerts"
+            response = await self._make_request('GET', url)
+            return response
+        except Exception as e:
+            self.logger.error(f"❌ get_pending_alerts error: {e}")
+            return None
+
+    # Optional: tự động gửi các event còn queue khi online lại
+    async def send_queued_events(self):
+        if not self.offline_events:
+            return
+        sent = 0
+        for event in self.offline_events[:]:
+            ok, _, _ = await self.submit_event(event)
+            if ok:
+                self.offline_events.remove(event)
+                sent += 1
+        if sent:
+            self.logger.info(f"✅ Sent {sent} queued events after reconnect")
+
+    async def check_agent_id_exists(self, agent_id: str) -> bool:
+        """Kiểm tra agent_id có tồn tại trên backend không"""
+        try:
+            url = f"{self.base_url}/api/v1/agents/{agent_id}/status"
+            response = await self._make_request('GET', url)
+            if response and isinstance(response, dict):
+                return bool(response.get('success', False))
+            return False
+        except Exception:
+            return False

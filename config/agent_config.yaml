@@ -18,7 +18,7 @@ agent:
   num_batch_processors: 2     # More batch processors
   
   # ✅ ALL LOGS CONTINUOUS: Very fast intervals
-  heartbeat_interval: 30      # 30 seconds between heartbeats
+  heartbeat_interval: 10      # 10 seconds between heartbeats
   system_monitor_interval: 60 # 1 minute between system checks
   
   # ✅ ALL LOGS CONTINUOUS: Conservative resource thresholds

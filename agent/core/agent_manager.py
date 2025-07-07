@@ -19,6 +19,7 @@ from pathlib import Path
 import socket
 import getpass
 import subprocess
+from collections import deque
 
 from agent.core.communication import ServerCommunication
 from agent.core.config_manager import ConfigManager
@@ -36,6 +37,9 @@ from agent.utils.security_notifications import (
     initialize_linux_notifier,
     get_linux_notifier
 )
+
+# Import communication polling action queue
+from .communication import polling_action_queue
 
 class EnhancedLinuxAgentManager:
     """Enhanced Linux Agent Manager với Alert Processing và Real-time Notifications"""
@@ -122,6 +126,10 @@ class EnhancedLinuxAgentManager:
             'boot_time': psutil.boot_time(),
             'uptime_seconds': time.time() - psutil.boot_time()
         }
+        
+        # Action queue polling
+        self.action_polling_task = None
+        self.action_polling_enabled = True
         
         self.logger.info(f"🚨 Enhanced Linux Agent Manager initialized with Alert Processing")
         self.logger.info(f"🔐 Root privileges: {self.has_root_privileges}")
@@ -719,600 +727,127 @@ Contact your system administrator immediately.
             raise
     
     async def start(self):
-        """✅ ENHANCED: Start Linux Agent Manager with alert processing"""
+        """🚀 Start the enhanced Linux agent manager with action queue support"""
         try:
-            self.logger.info("🚀 Starting Enhanced Linux Agent Manager with Alert Processing...")
+            self.logger.info("🚀 Starting Enhanced Linux Agent Manager...")
             
-            # Register with server if not already registered
-            if not self.is_registered:
-                registration_success = await self._register_with_server()
-                if not registration_success:
-                    self.logger.warning("⚠️ Registration failed - agent will run in offline mode")
-                    # Generate a temporary agent ID for offline operation
-                    if not self.agent_id:
-                        self.agent_id = f"offline-{uuid.uuid4().hex[:8]}"
-                        self.logger.info(f"🆔 Using temporary agent ID: {self.agent_id}")
+            # Register with server
+            await self._register_with_server()
             
-            # Ensure agent_id is available (either from registration or temporary)
+            # FIXED: Ensure agent_id is available
             if not self.agent_id:
-                self.logger.error("❌ No agent_id available - cannot start agent")
-                return
+                raise Exception("Agent registration failed - no agent_id received")
             
-            self.logger.info(f"✅ Agent ready with ID: {self.agent_id}")
+            # Set agent_id for event processor
+            if self.event_processor and self.agent_id:
+                self.event_processor.set_agent_id(self.agent_id)
+                self.logger.info(f"[EVENT_PROCESSOR] Set AgentID: {self.agent_id}")
             
-            # Update agent_id everywhere after successful registration or temporary assignment
-            await self._update_all_agent_ids()
+            # Check alert endpoints
+            await self._check_alert_endpoints_availability()
             
-            # Start Event Processor
-            self.logger.info("⚡ Starting Event Processor...")
+            # Start event processor
             await self.event_processor.start()
-            self.logger.info("✅ Event Processor started")
             
-            # ✅ ENHANCED: Start alert polling if communication is available
-            await self._start_alert_monitoring()
+            # FIXED: Set agent_id on all collectors before starting
+            for name, collector in self.collectors.items():
+                if hasattr(collector, 'set_agent_id'):
+                    collector.set_agent_id(self.agent_id)
+                    self.logger.debug(f"[{name.upper()}_COLLECTOR] Set AgentID: {self.agent_id}")
             
-            # Start collectors with error handling
-            await self._start_collectors_safely()
+            # Start collectors
+            await self._start_collectors()
             
-            # Set final running state
-            self.is_running = True
+            # Start monitoring
             self.is_monitoring = True
-            self.start_time = datetime.now()
             
-            # Start enhanced monitoring tasks with alert monitoring
+            # Start heartbeat task
             asyncio.create_task(self._heartbeat_loop())
-            asyncio.create_task(self._system_monitor())
-            asyncio.create_task(self._performance_monitor())
-            asyncio.create_task(self._health_monitor())
-            asyncio.create_task(self._alert_monitoring_loop())  # ✅ ENHANCED: Alert monitoring
             
-            self.logger.info(f"🎉 Enhanced Linux Agent Manager started successfully")
-            self.logger.info(f"   🆔 Agent ID: {self.agent_id}")
-            self.logger.info(f"   📊 Active Collectors: {len(self.collectors)}")
-            self.logger.info(f"   🔔 Alert Processing: {self.alert_handler_registered}")
-            self.logger.info(f"   🚨 Security Notifications: {bool(self.security_notifier)}")
-            self.logger.info(f"   🐧 Platform: Linux ({self.system_info.get('distribution', 'Unknown')})")
+            # Start server connection monitor task
+            asyncio.create_task(self.monitor_server_connection())
             
-            if not self.is_registered:
-                self.logger.info("💡 Agent running in offline mode - will retry registration periodically")
+            # ✅ NEW: Start action queue polling
+            await self._start_action_queue_polling()
+            
+            self.logger.info(f"[START] Using AgentID: {self.agent_id}")
+            self.logger.info("Agent started successfully")
             
         except Exception as e:
-            self.logger.error(f"❌ Enhanced Linux agent manager start failed: {e}")
+            self.logger.error(f"Agent start failed: {e}")
             raise
     
-    async def _start_alert_monitoring(self):
-        """✅ ENHANCED: Start alert monitoring and polling"""
+    async def _start_action_queue_polling(self):
+        """✅ NEW: Start polling action queue from Redis"""
         try:
-            if self.communication and hasattr(self.communication, 'start_alert_polling'):
-                await self.communication.start_alert_polling()
-                self.logger.info("✅ Alert polling started")
-            else:
-                self.logger.warning("⚠️ Alert polling not available - communication offline")
-                
-        except Exception as e:
-            self.logger.error(f"❌ Error starting alert monitoring: {e}")
-    
-    async def _start_collectors_safely(self):
-        """Start collectors with individual error handling"""
-        try:
-            self.logger.info("🚀 Starting collectors...")
+            if not self.agent_id:
+                self.logger.warning("⚠️ No agent_id available - cannot start action queue polling")
+                return
             
-            successful_starts = 0
-            for collector_name, collector in self.collectors.items():
+            if not self.action_polling_enabled:
+                self.logger.info("ℹ️ Action queue polling disabled")
+                return
+            
+            # Start action queue polling in a separate thread
+            def start_polling():
                 try:
-                    await collector.start()
-                    self.logger.info(f"✅ {collector_name} collector started")
-                    successful_starts += 1
+                    self.logger.info(f"🔄 Starting action queue polling for agent: {self.agent_id}")
+                    polling_action_queue(self.agent_id)
                 except Exception as e:
-                    self.logger.error(f"❌ Error starting {collector_name} collector: {e}")
-                    self.health_checks['collectors'][collector_name] = False
-                    # Remove failed collector from active collectors
-                    # Don't raise exception - continue with other collectors
+                    self.logger.error(f"❌ Action queue polling failed: {e}")
             
-            self.logger.info(f"✅ Successfully started {successful_starts}/{len(self.collectors)} collectors")
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error in collector startup: {e}")
-            # Don't raise exception - allow agent to continue with available collectors
-    
-    async def _register_with_server(self):
-        """Register with server with enhanced data collection - FIXED"""
-        try:
-            if self.is_registered and self.agent_id:
-                self.logger.info(f"✅ Agent already registered with ID: {self.agent_id[:8]}...")
-                return True
-            
-            # Check if communication is available
-            if not self.communication or not self.communication.is_online():
-                self.logger.warning("⚠️ Communication not available - skipping registration")
-                self.logger.info("💡 Agent will run in offline mode and retry registration later")
-                return False
-            
-            self.logger.info("📡 Registering Enhanced Linux Agent with alert capabilities...")
-            
-            # Get comprehensive system information
-            ip_address = self._get_local_ip()
-            mac_address = self._get_mac_address()
-            
-            # Get current system metrics
-            cpu_usage = psutil.cpu_percent(interval=1)
-            memory = psutil.virtual_memory()
-            disk = psutil.disk_usage('/')
-            
-            # Create registration data with ALL required fields
-            registration_data = AgentRegistrationData(
-                hostname=self.system_info['hostname'],
-                ip_address=ip_address,
-                operating_system=f"Linux {self.system_info.get('distribution', 'Unknown')}",
-                os_version=self.system_info.get('kernel', 'Unknown'),
-                architecture=self.system_info.get('architecture', 'Unknown'),
-                agent_version='2.1.0-Linux-ENHANCED-ALERTS',
-                mac_address=mac_address,
-                domain=self._get_domain(),
-                install_path=str(Path(__file__).resolve().parent.parent.parent),
-                status="Active",
-                cpu_usage=cpu_usage,
-                memory_usage=memory.percent,
-                disk_usage=disk.percent,
-                network_latency=0,
-                monitoring_enabled=True,
-                platform="linux",
-                kernel_version=self.system_info.get('kernel'),
-                distribution=self.system_info.get('distribution'),
-                current_user=self.system_info.get('current_user'),
-                has_root_privileges=self.system_info.get('is_root', False)
+            # Create and start polling thread
+            polling_thread = threading.Thread(
+                target=start_polling,
+                name=f"action-polling-{self.agent_id}",
+                daemon=True
             )
+            polling_thread.start()
             
-            # Log registration details
-            self.logger.info(f"📋 Enhanced Registration Details:")
-            self.logger.info(f"   🆔 Agent ID: {self.agent_id}")
-            self.logger.info(f"   🖥️ Hostname: {registration_data.hostname}")
-            self.logger.info(f"   🌐 IP Address: {registration_data.ip_address}")
-            self.logger.info(f"   🐧 OS: {registration_data.operating_system}")
-            self.logger.info(f"   🔔 Alert Capable: YES")
-            self.logger.info(f"   🚨 Notification Ready: {bool(self.security_notifier)}")
+            self.action_polling_task = polling_thread
+            self.logger.info("✅ Action queue polling started")
             
-            # Register agent with server
-            self.logger.info("📝 Registering enhanced agent with server...")
-            registration_result = await self.communication.register_agent(registration_data)
-            
-            if registration_result and (registration_result.get('success') or registration_result.get('agent_id')):
-                returned_agent_id = registration_result.get('agent_id')
-                if returned_agent_id:
-                    self.agent_id = returned_agent_id
-                    self.is_registered = True
-                    self.logger.info(f"✅ Enhanced agent registered successfully: {self.agent_id}")
-                    self.logger.info("🔔 Agent ready to receive security alerts from server")
-                    return True
-                else:
-                    self.logger.warning("⚠️ Registration successful but no agent_id returned")
-                    return False
-            else:
-                error_msg = registration_result.get('error', 'Unknown error') if registration_result else 'No response'
-                self.logger.warning(f"⚠️ Registration failed: {error_msg}")
-                self.logger.info("💡 Agent will continue running and retry registration later")
-                return False
-                
         except Exception as e:
-            self.logger.warning(f"⚠️ Registration failed: {e}")
-            self.logger.info("💡 Agent will continue running and retry registration later")
-            return False  # Don't raise exception - allow agent to continue
+            self.logger.error(f"❌ Failed to start action queue polling: {e}")
     
-    async def _update_all_agent_ids(self):
-        """Update agent_id in all components after successful registration"""
+    async def stop(self):
+        """🛑 Stop the agent manager with proper cleanup"""
         try:
-            self.logger.info(f"🔄 Updating agent_id in all components: {self.agent_id[:8]}...")
+            self.logger.info("🛑 Stopping Enhanced Linux Agent Manager...")
             
-            # Update event processor
+            # Stop action queue polling
+            if self.action_polling_task and self.action_polling_task.is_alive():
+                self.logger.info("🛑 Stopping action queue polling...")
+                # Note: polling_action_queue runs in infinite loop, will stop when agent stops
+                self.action_polling_enabled = False
+            
+            # Stop event processor
             if self.event_processor:
-                if hasattr(self.event_processor, 'agent_id'):
-                    self.event_processor.agent_id = self.agent_id
-                    self.logger.debug("✅ Event processor agent_id updated")
+                await self.event_processor.stop()
             
-            # Update all collectors
+            # Stop collectors
             for name, collector in self.collectors.items():
-                if hasattr(collector, 'agent_id'):
-                    collector.agent_id = self.agent_id
-                    self.logger.debug(f"✅ {name} collector agent_id updated")
+                try:
+                    await collector.stop()
+                    self.logger.info(f"✅ {name} collector stopped")
+                except Exception as e:
+                    self.logger.error(f"❌ Error stopping {name} collector: {e}")
             
-            # Update communication
+            # Stop communication
             if self.communication:
-                if hasattr(self.communication, 'set_agent_id'):
-                    self.communication.set_agent_id(self.agent_id)
-                    self.logger.debug("✅ Communication agent_id updated")
+                await self.communication.close()
             
-            self.logger.info("✅ All components updated with new agent_id")
+            self.is_running = False
+            self.is_monitoring = False
+            
+            self.logger.info("✅ Enhanced Linux Agent Manager stopped")
             
         except Exception as e:
-            self.logger.error(f"❌ Error updating agent_ids: {e}")
-    
-    async def _alert_monitoring_loop(self):
-        """✅ ENHANCED: Monitor alert processing health and statistics"""
-        try:
-            while self.is_running and not self.is_paused:
-                try:
-                    # Check alert processing health
-                    if self.communication and hasattr(self.communication, 'get_stats'):
-                        comm_stats = self.communication.get_stats()
-                        
-                        # Update alert statistics from communication
-                        self.alert_stats.update({
-                            'total_alerts_received': comm_stats.get('alerts_received', 0),
-                            'alerts_processed': comm_stats.get('alerts_processed', 0)
-                        })
-                    
-                    # Check security notifier health
-                    if self.security_notifier:
-                        notifier_stats = self.security_notifier.get_stats()
-                        self.health_checks['security_notifier'] = notifier_stats.get('enabled', False)
-                    
-                    # Log alert statistics every 5 minutes
-                    if int(time.time()) % 300 == 0:
-                        self._log_alert_statistics()
-                    
-                    # Check for stale alert processing
-                    if (self.alert_stats['last_alert_time'] and 
-                        (datetime.now() - self.alert_stats['last_alert_time']).total_seconds() > 3600):
-                        self.logger.info("📊 No alerts received in the last hour")
-                    
-                    await asyncio.sleep(60)  # Check every minute
-                    
-                except Exception as e:
-                    self.logger.error(f"❌ Alert monitoring error: {e}")
-                    await asyncio.sleep(60)
-                    
-        except Exception as e:
-            self.logger.error(f"❌ Alert monitoring loop failed: {e}")
-    
-    def _log_alert_statistics(self):
-        """✅ ENHANCED: Log alert processing statistics"""
-        try:
-            self.logger.info("🚨 Alert Processing Statistics:")
-            self.logger.info(f"   📥 Total Alerts Received: {self.alert_stats['total_alerts_received']}")
-            self.logger.info(f"   🔴 Critical: {self.alert_stats['critical_alerts']}")
-            self.logger.info(f"   🟠 High: {self.alert_stats['high_alerts']}")
-            self.logger.info(f"   🟡 Medium: {self.alert_stats['medium_alerts']}")
-            self.logger.info(f"   🟢 Low: {self.alert_stats['low_alerts']}")
-            self.logger.info(f"   📊 Server Rules: {self.alert_stats['server_rule_alerts']}")
-            self.logger.info(f"   📋 Local Rules: {self.alert_stats['local_rule_alerts']}")
-            self.logger.info(f"   ✅ Acknowledged: {self.alert_stats['alerts_acknowledged']}")
-            self.logger.info(f"   ❌ Processing Errors: {self.alert_stats['alert_processing_errors']}")
-            
-            if self.alert_stats['last_alert_time']:
-                last_alert_ago = (datetime.now() - self.alert_stats['last_alert_time']).total_seconds()
-                self.logger.info(f"   🕒 Last Alert: {last_alert_ago:.0f} seconds ago")
-                
-        except Exception as e:
-            self.logger.debug(f"Error logging alert statistics: {e}")
-    
-    async def _heartbeat_loop(self):
-        """Send periodic heartbeats to server"""
-        try:
-            while self.is_running and not self.is_paused:
-                try:
-                    await self.send_heartbeat()
-                    
-                    # Get heartbeat interval from config
-                    heartbeat_interval = self.config.get('agent', {}).get('heartbeat_interval', 60)
-                    await asyncio.sleep(heartbeat_interval)
-                    
-                except Exception as e:
-                    self.logger.error(f"❌ Heartbeat error: {e}")
-                    await asyncio.sleep(30)  # Wait 30 seconds before retry
-                    
-        except Exception as e:
-            self.logger.error(f"❌ Heartbeat loop failed: {e}")
-    
-    async def _system_monitor(self):
-        """Monitor system resources and health"""
-        try:
-            while self.is_running and not self.is_paused:
-                try:
-                    # Get system metrics
-                    cpu_percent = psutil.cpu_percent(interval=1)
-                    memory = psutil.virtual_memory()
-                    disk = psutil.disk_usage('/')
-                    
-                    # Update system stats
-                    self.system_stats.update({
-                        'cpu_usage': cpu_percent,
-                        'memory_usage': memory.percent,
-                        'memory_available_mb': memory.available // (1024 * 1024),
-                        'disk_usage': disk.percent,
-                        'disk_free_gb': disk.free // (1024 * 1024 * 1024),
-                        'last_system_check': time.time()
-                    })
-                    
-                    # Check thresholds and log warnings
-                    cpu_threshold = self.config.get('agent', {}).get('cpu_threshold', 90)
-                    memory_threshold = self.config.get('agent', {}).get('memory_threshold', 80)
-                    
-                    if cpu_percent > cpu_threshold:
-                        self.logger.warning(f"⚠️ High CPU usage: {cpu_percent:.1f}% (threshold: {cpu_threshold}%)")
-                    
-                    if memory.percent > memory_threshold:
-                        self.logger.warning(f"⚠️ High memory usage: {memory.percent:.1f}% (threshold: {memory_threshold}%)")
-                    
-                    # Get system monitor interval from config
-                    monitor_interval = self.config.get('agent', {}).get('system_monitor_interval', 60)
-                    await asyncio.sleep(monitor_interval)
-                    
-                except Exception as e:
-                    self.logger.error(f"❌ System monitoring error: {e}")
-                    await asyncio.sleep(60)
-                    
-        except Exception as e:
-            self.logger.error(f"❌ System monitor failed: {e}")
-    
-    async def _performance_monitor(self):
-        """Monitor agent performance"""
-        try:
-            while self.is_running and not self.is_paused:
-                try:
-                    # Get current process metrics
-                    current_process = psutil.Process()
-                    cpu_percent = current_process.cpu_percent()
-                    memory_info = current_process.memory_info()
-                    memory_mb = memory_info.rss / 1024 / 1024
-                    
-                    # Update performance stats
-                    self.performance_stats.update({
-                        'memory_usage_mb': memory_mb,
-                        'cpu_usage_percent': cpu_percent,
-                        'last_performance_check': time.time()
-                    })
-                    
-                    # Log warnings for high resource usage
-                    if cpu_percent > 25:  # More than 25% CPU
-                        self.logger.warning(f"⚠️ High CPU usage: {cpu_percent:.1f}%")
-                    
-                    if memory_mb > 256:  # More than 256MB
-                        self.logger.warning(f"⚠️ High memory usage: {memory_mb:.1f}MB")
-                    
-                    # Get event processor stats
-                    if self.event_processor:
-                        try:
-                            ep_stats = self.event_processor.get_stats()
-                            self.performance_stats['events_processed'] = ep_stats.get('events_sent', 0)
-                        except:
-                            pass
-                    
-                    await asyncio.sleep(60)  # Check every minute
-                    
-                except Exception as e:
-                    self.logger.error(f"❌ Performance monitoring error: {e}")
-                    await asyncio.sleep(60)
-                    
-        except Exception as e:
-            self.logger.error(f"❌ Performance monitor failed: {e}")
-    
-    async def _health_monitor(self):
-        """Monitor component health"""
-        try:
-            while self.is_running and not self.is_paused:
-                try:
-                    # Check communication health
-                    if self.communication:
-                        self.health_checks['communication'] = self.communication.is_online()
-                    
-                    # Check event processor health
-                    if self.event_processor:
-                        self.health_checks['event_processor'] = self.event_processor.is_running
-                    
-                    # Check collector health
-                    for name, collector in self.collectors.items():
-                        if hasattr(collector, 'is_running'):
-                            self.health_checks['collectors'][name] = collector.is_running
-                        else:
-                            self.health_checks['collectors'][name] = True  # Assume healthy if no status
-                    
-                    # ✅ ENHANCED: Check alert processing health
-                    self.health_checks['alert_processing'] = self.alert_handler_registered
-                    if self.security_notifier:
-                        notifier_stats = self.security_notifier.get_stats()
-                        self.health_checks['security_notifier'] = notifier_stats.get('enabled', False)
-                    
-                    # Log health summary every 5 minutes
-                    if int(time.time()) % 300 == 0:
-                        healthy_collectors = sum(1 for status in self.health_checks['collectors'].values() if status)
-                        total_collectors = len(self.health_checks['collectors'])
-                        
-                        self.logger.info("🏥 Enhanced Health Status:")
-                        self.logger.info(f"   📡 Communication: {'✅' if self.health_checks['communication'] else '❌'}")
-                        self.logger.info(f"   ⚡ Event Processor: {'✅' if self.health_checks['event_processor'] else '❌'}")
-                        self.logger.info(f"   📊 Collectors: {healthy_collectors}/{total_collectors} healthy")
-                        self.logger.info(f"   🔔 Alert Processing: {'✅' if self.health_checks['alert_processing'] else '❌'}")
-                        self.logger.info(f"   🚨 Security Notifier: {'✅' if self.health_checks['security_notifier'] else '❌'}")
-                    
-                    self.health_checks['last_health_check'] = time.time()
-                    
-                    await asyncio.sleep(30)  # Check every 30 seconds
-                    
-                except Exception as e:
-                    self.logger.error(f"❌ Health monitoring error: {e}")
-                    await asyncio.sleep(30)
-                    
-        except Exception as e:
-            self.logger.error(f"❌ Health monitor failed: {e}")
+            self.logger.error(f"❌ Error stopping agent manager: {e}")
     
     def get_status(self) -> Dict[str, Any]:
         """✅ ENHANCED: Get enhanced agent status with alert processing info"""
         return self.get_enhanced_status()
-    
-    async def stop(self):
-        """✅ ENHANCED: Stop the enhanced agent manager and all components"""
-        try:
-            self.logger.info("🛑 Stopping Enhanced Linux Agent Manager with Alert Processing...")
-            self.is_running = False
-            self.is_monitoring = False
-            
-            # ✅ ENHANCED: Stop alert polling
-            if self.communication and hasattr(self.communication, 'stop_alert_polling'):
-                await self.communication.stop_alert_polling()
-                self.logger.info("✅ Alert polling stopped")
-            
-            # Stop all collectors
-            if self.collectors:
-                self.logger.info("🛑 Stopping collectors...")
-                for name, collector in self.collectors.items():
-                    try:
-                        if hasattr(collector, 'stop'):
-                            await collector.stop()
-                            self.logger.info(f"✅ {name} collector stopped")
-                    except Exception as e:
-                        self.logger.error(f"❌ Error stopping {name} collector: {e}")
-            
-            # Stop event processor
-            if self.event_processor:
-                try:
-                    await self.event_processor.stop()
-                    self.logger.info("✅ Event processor stopped")
-                except Exception as e:
-                    self.logger.error(f"❌ Error stopping event processor: {e}")
-            
-            # Close communication (includes stopping alert polling)
-            if self.communication:
-                try:
-                    await self.communication.close()
-                    self.logger.info("✅ Communication closed")
-                except Exception as e:
-                    self.logger.error(f"❌ Error closing communication: {e}")
-            
-            # ✅ ENHANCED: Log final alert statistics
-            if self.alert_stats['total_alerts_received'] > 0:
-                self.logger.info("🚨 Final Alert Statistics:")
-                self.logger.info(f"   📥 Total Alerts: {self.alert_stats['total_alerts_received']}")
-                self.logger.info(f"   🔴 Critical: {self.alert_stats['critical_alerts']}")
-                self.logger.info(f"   🟠 High: {self.alert_stats['high_alerts']}")
-                self.logger.info(f"   ❌ Errors: {self.alert_stats['alert_processing_errors']}")
-            
-            self.logger.info("✅ Enhanced Linux Agent Manager stopped successfully")
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error stopping enhanced agent manager: {e}")
-    
-    def _get_collector_status(self) -> Dict[str, Any]:
-        """Get status of all collectors"""
-        status = {}
-        for name, collector in self.collectors.items():
-            try:
-                if hasattr(collector, 'is_running'):
-                    status[name] = {
-                        'running': collector.is_running,
-                        'type': type(collector).__name__
-                    }
-                else:
-                    status[name] = {
-                        'running': True,  # Assume running if no status method
-                        'type': type(collector).__name__
-                    }
-            except Exception as e:
-                status[name] = {
-                    'running': False,
-                    'error': str(e),
-                    'type': type(collector).__name__
-                }
-        return status
-    
-    async def send_heartbeat(self):
-        """✅ ENHANCED: Send heartbeat to server with alert processing info"""
-        try:
-            if not self.is_registered or not self.agent_id:
-                self.logger.debug("Skipping heartbeat - agent not registered")
-                return
-            
-            # Get current system metrics
-            cpu_usage = psutil.cpu_percent(interval=0.1)
-            memory = psutil.virtual_memory()
-            disk = psutil.disk_usage('/')
-            
-            # ✅ ENHANCED: Create heartbeat data with alert info
-            heartbeat_data = AgentHeartbeatData(
-                agent_id=self.agent_id,
-                hostname=self.system_info['hostname'],
-                timestamp=datetime.now().isoformat(),
-                status="Active",
-                cpu_usage=cpu_usage,
-                memory_usage=memory.percent,
-                disk_usage=disk.percent,
-                uptime=time.time() - psutil.boot_time(),
-                events_sent=self.performance_stats.get('events_processed', 0),
-                collector_status=self._get_collector_status()
-            )
-            
-            # ✅ ENHANCED: Add alert processing info to metadata
-            if hasattr(heartbeat_data, 'metadata') and heartbeat_data.metadata:
-                heartbeat_data.metadata.update({
-                    'alert_processing': {
-                        'handler_registered': self.alert_handler_registered,
-                        'total_alerts_received': self.alert_stats['total_alerts_received'],
-                        'critical_alerts': self.alert_stats['critical_alerts'],
-                        'processing_errors': self.alert_stats['alert_processing_errors'],
-                        'notifier_available': bool(self.security_notifier),
-                        'last_alert_time': self.alert_stats['last_alert_time'].isoformat() if self.alert_stats['last_alert_time'] else None
-                    }
-                })
-            
-            # Send heartbeat
-            if self.communication:
-                await self.communication.send_heartbeat(heartbeat_data)
-                self.last_heartbeat = datetime.now()
-                self.logger.debug(f"💓 Enhanced heartbeat sent - CPU: {cpu_usage:.1f}%, Memory: {memory.percent:.1f}%, Alerts: {self.alert_stats['total_alerts_received']}")
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error sending enhanced heartbeat: {e}")
-    
-    async def pause(self):
-        """Pause the agent manager"""
-        try:
-            self.logger.info("⏸️ Pausing Enhanced Linux Agent Manager...")
-            self.is_paused = True
-            
-            # Pause collectors
-            for name, collector in self.collectors.items():
-                try:
-                    if hasattr(collector, 'pause'):
-                        await collector.pause()
-                        self.logger.info(f"⏸️ {name} collector paused")
-                except Exception as e:
-                    self.logger.error(f"❌ Error pausing {name} collector: {e}")
-            
-            self.logger.info("✅ Enhanced Linux Agent Manager paused")
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error pausing agent manager: {e}")
-    
-    async def resume(self):
-        """Resume the agent manager"""
-        try:
-            self.logger.info("▶️ Resuming Enhanced Linux Agent Manager...")
-            self.is_paused = False
-            
-            # Resume collectors
-            for name, collector in self.collectors.items():
-                try:
-                    if hasattr(collector, 'resume'):
-                        await collector.resume()
-                        self.logger.info(f"▶️ {name} collector resumed")
-                except Exception as e:
-                    self.logger.error(f"❌ Error resuming {name} collector: {e}")
-            
-            self.logger.info("✅ Enhanced Linux Agent Manager resumed")
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error resuming agent manager: {e}")
-    
-    def get_performance_stats(self) -> Dict[str, Any]:
-        """Get current performance statistics"""
-        return self.performance_stats.copy()
-    
-    def get_health_status(self) -> Dict[str, Any]:
-        """Get current health status"""
-        return self.health_checks.copy()
-    
-    def get_alert_stats(self) -> Dict[str, Any]:
-        """✅ ENHANCED: Get alert processing statistics"""
-        return self.alert_stats.copy()
     
     def get_enhanced_status(self) -> Dict[str, Any]:
         """✅ ENHANCED: Get enhanced agent status with alert processing metrics"""

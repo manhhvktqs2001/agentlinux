@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from agent.core.config_manager import ConfigManager
 from agent.core.communication import ServerCommunication
 from agent.schemas.events import EventData
+from agent.utils.security_notifications import LinuxSecurityNotifier
 
 @dataclass
 class ProcessingStats:
@@ -71,10 +72,19 @@ class EventProcessor:
         # Thread safety
         self._lock = threading.Lock()
         
+        # ✅ FIXED: Enhanced Security Notification System (like Windows)
+        self.security_notifier = LinuxSecurityNotifier(config_manager)
+        self.security_notifier.set_communication(communication)
+        self.security_notifier.enabled = True
+        self.security_notifier.show_server_rules = True
+        self.security_notifier.show_local_rules = False
+        self.security_notifier.show_risk_based_alerts = True
+        
         self.logger.info(f"🔄 Linux Event Processor initialized")
         self.logger.info(f"   📦 Batch Size: {self.batch_size}")
         self.logger.info(f"   📊 Queue Size: {self.max_queue_size}")
         self.logger.info(f"   👥 Workers: {self.num_workers}")
+        self.logger.info(f"   🔔 Security Notifier: Enabled")
     
     def set_agent_id(self, agent_id: str):
         """Set agent ID for event processing"""
@@ -236,33 +246,293 @@ class EventProcessor:
             return f"{event_data.event_type}:{event_data.event_action}"
     
     async def _send_event_immediately(self, event_data: EventData) -> bool:
-        """✅ REALTIME: Send single event immediately to server"""
+        """✅ REALTIME: Send single event immediately to server and process response"""
         try:
-            # ✅ FIXED: Better logging that handles None process_name
             event_identifier = self._get_event_identifier(event_data)
             self.logger.info(f"🌐 Attempting to send event to server: {event_identifier}")
-            
             if not self.communication:
                 self.logger.error("❌ No communication available")
                 return False
-            
             self.logger.info(f"📡 Communication found, submitting event: {event_identifier}")
             # Send event immediately
             success, response, error = await self.communication.submit_event(event_data)
-            
             if success:
                 self.logger.info(f"✅ Event submitted successfully to server: {event_identifier}")
+                
+                # ✅ FIXED: Process server response for alerts and actions (like Windows)
+                if response:
+                    await self._process_server_response(response, event_data)
+                
+                # Sau khi gửi thành công, thử gửi lại các event offline nếu có
+                if self.communication.offline_events:
+                    self.logger.info(f"📤 Đang gửi lại {len(self.communication.offline_events)} event offline...")
+                    offline_events_copy = self.communication.offline_events.copy()
+                    self.communication.offline_events.clear()
+                    for offline_event in offline_events_copy:
+                        await self._send_event_immediately(offline_event)
                 return True
             else:
                 self.logger.warning(f"⚠️ Event submission failed: {error}")
+                # Nếu gửi thất bại, lưu lại event vào offline_events
+                self.communication.offline_events.append(event_data)
                 return False
-                
         except Exception as e:
             self.logger.error(f"❌ Error in immediate event sending: {e}")
             import traceback
             self.logger.error(f"❌ Traceback: {traceback.format_exc()}")
+            # Nếu lỗi, lưu lại event vào offline_events
+            if self.communication:
+                self.communication.offline_events.append(event_data)
             return False
     
+    async def _process_server_response(self, server_response: Dict[str, Any], original_event: EventData):
+        """✅ FIXED: Process server response for alerts and actions (like Windows)"""
+        try:
+            # In ra toàn bộ response server gửi về cho agent để debug
+            self.logger.warning(f"==== RAW SERVER RESPONSE TO AGENT ====")
+            self.logger.warning(json.dumps(server_response, indent=2, ensure_ascii=False))
+            # Check if response contains alerts or actions
+            alerts_generated = server_response.get('alerts_generated', [])
+            alerts = server_response.get('alerts', [])
+            action = server_response.get('action')
+            threat_detected = server_response.get('threat_detected', False)
+            rule_triggered = server_response.get('rule_triggered')
+            # Process alerts if any
+            if alerts_generated or alerts or threat_detected or rule_triggered:
+                self.logger.warning("🚨 ========== SERVER RESPONSE CONTAINS ALERTS/ACTIONS ==========")
+                self.logger.warning(f"📄 RAW SERVER RESPONSE: {json.dumps(server_response, indent=2)}")
+                # Convert response to alert format if needed
+                if not alerts_generated and not alerts and (threat_detected or rule_triggered):
+                    # Create alert from response data
+                    alert_data = {
+                        'id': f'response_alert_{int(time.time())}',
+                        'alert_id': f'response_alert_{int(time.time())}',
+                        'rule_id': server_response.get('rule_id'),
+                        'rule_name': server_response.get('rule_name', rule_triggered or 'Unknown Rule'),
+                        'rule_description': server_response.get('rule_description', ''),
+                        'title': f"Rule Triggered: {rule_triggered or 'Unknown Rule'}",
+                        'description': server_response.get('threat_description', 'Rule violation detected'),
+                        'severity': server_response.get('severity', 'Medium'),
+                        'risk_score': server_response.get('risk_score', 50),
+                        'detection_method': server_response.get('detection_method', 'Rule Engine'),
+                        'event_id': server_response.get('event_id'),
+                        'timestamp': datetime.now().isoformat(),
+                        'server_generated': True,
+                        'rule_violation': True,
+                        'process_name': getattr(original_event, 'process_name', None),
+                        'process_path': getattr(original_event, 'process_path', None),
+                        'file_path': getattr(original_event, 'file_path', None),
+                        'source_ip': getattr(original_event, 'source_ip', None),
+                        'destination_ip': getattr(original_event, 'destination_ip', None),
+                        'action': action
+                    }
+                    alerts_generated = [alert_data]
+                # Process all alerts
+                all_alerts = alerts_generated + alerts
+                if all_alerts:
+                    self.logger.warning(f"🔔 PROCESSING {len(all_alerts)} ALERTS FROM SERVER")
+                    for alert in all_alerts:
+                        try:
+                            await self._display_alert_and_execute_action(alert, original_event, action)
+                        except Exception as e:
+                            self.logger.error(f"❌ Error processing alert: {e}")
+                self.logger.warning("🚨 ========== ALERTS/ACTIONS PROCESSING COMPLETE ==========")
+        except Exception as e:
+            self.logger.error(f"❌ Error processing server response: {e}")
+            import traceback
+            self.logger.error(f"❌ Traceback: {traceback.format_exc()}")
+    
+    async def _display_alert_and_execute_action(self, alert: Dict[str, Any], original_event: EventData, action_from_response=None):
+        """✅ FIXED: Display alert and execute action (like Windows)"""
+        try:
+            self.logger.warning("⚡ ACTION DATA RECEIVED:")
+            self.logger.warning(f"   📋 Alert ID: {alert.get('id', 'Unknown')}")
+            self.logger.warning(f"   🏷️ Rule: {alert.get('rule_name', 'Unknown')}")
+            self.logger.warning(f"   ⚠️ Severity: {alert.get('severity', 'Medium')}")
+            self.logger.warning(f"   📊 Risk Score: {alert.get('risk_score', 50)}")
+            # Display alert using LinuxSecurityNotifier
+            if self.security_notifier and self.security_notifier.enabled:
+                alert_obj = type('Alert', (), {
+                    'alert_id': alert.get('id', f'alert_{int(time.time())}'),
+                    'title': alert.get('title', 'Security Alert'),
+                    'rule_name': alert.get('rule_name', 'Unknown Rule'),
+                    'rule_description': alert.get('rule_description', ''),
+                    'threat_description': alert.get('description', 'Security violation detected'),
+                    'severity': alert.get('severity', 'Medium'),
+                    'risk_score': alert.get('risk_score', 50),
+                    'timestamp': datetime.now(),
+                    'requires_acknowledgment': False,
+                    'display_popup': True,
+                    'play_sound': True,
+                    'action_required': False,
+                    'event_details': {
+                        'event_type': original_event.event_type,
+                        'process_name': getattr(original_event, 'process_name', None),
+                        'process_path': getattr(original_event, 'process_path', None),
+                        'file_path': getattr(original_event, 'file_path', None),
+                        'source_ip': getattr(original_event, 'source_ip', None),
+                        'destination_ip': getattr(original_event, 'destination_ip', None),
+                        'command_line': getattr(original_event, 'command_line', None)
+                    }
+                })()
+                await self.security_notifier.handle_security_alert(alert_obj)
+            # Lấy action từ alert hoặc từ response ngoài
+            action = alert.get('action') or action_from_response
+            if action:
+                self.logger.warning("⚡ EXECUTING ACTION FROM SERVER:")
+                self.logger.warning(f"   🔧 Action Type: {action.get('action_type', 'Unknown')}")
+                action_type = action.get('action_type')
+                if action_type == 'kill_process':
+                    await self._execute_kill_process_action(action, original_event)
+                elif action_type == 'block_network':
+                    await self._execute_block_network_action(action, original_event)
+                elif action_type == 'quarantine_file':
+                    await self._execute_quarantine_file_action(action, original_event)
+                else:
+                    self.logger.warning(f"⚠️ Unknown action type: {action_type}")
+        except Exception as e:
+            self.logger.error(f"❌ Error displaying alert and executing action: {e}")
+            import traceback
+            self.logger.error(f"❌ Traceback: {traceback.format_exc()}")
+    
+    async def _execute_kill_process_action(self, action: Dict[str, Any], original_event: EventData):
+        """Execute kill process action"""
+        try:
+            # Lấy PID từ action
+            pid = action.get('process_id') or action.get('PID') or action.get('target_pid')
+            process_name = action.get('process_name', 'Unknown')
+            force_kill = action.get('force_kill', True)
+            
+            if not pid:
+                self.logger.error("❌ No PID provided for kill_process action")
+                return
+            
+            self.logger.warning(f"🎯 KILLING PROCESS ON LINUX:")
+            self.logger.warning(f"   🔧 PID: {pid}")
+            self.logger.warning(f"   📋 Process Name: {process_name}")
+            self.logger.warning(f"   💪 Force Kill: {force_kill}")
+            
+            # Thực thi lệnh kill
+            import subprocess
+            sig = '-9' if force_kill else ''
+            cmd = ["kill"]
+            if sig:
+                cmd.append(sig)
+            cmd.append(str(pid))
+            
+            self.logger.warning(f"⚡ Executing: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            
+            if result.returncode == 0:
+                success_msg = f"✅ Process {process_name} (PID: {pid}) killed successfully"
+                self.logger.warning(success_msg)
+                await self._show_action_notification("Process Killed", success_msg)
+            else:
+                error_msg = f"❌ Failed to kill process {process_name} (PID: {pid}): {result.stderr}"
+                self.logger.error(error_msg)
+                await self._show_action_notification("Process Kill Failed", error_msg)
+                
+        except Exception as e:
+            error_msg = f"❌ Error executing kill process action: {e}"
+            self.logger.error(error_msg)
+            await self._show_action_notification("Process Kill Error", error_msg)
+    
+    async def _execute_block_network_action(self, action: Dict[str, Any], original_event: EventData):
+        """Execute block network action"""
+        try:
+            target_ip = action.get('target_ip')
+            if not target_ip:
+                self.logger.error("❌ No target IP provided for block_network action")
+                return
+            
+            self.logger.warning(f"🎯 BLOCKING NETWORK ON LINUX:")
+            self.logger.warning(f"   🌐 Target IP: {target_ip}")
+            
+            # Execute iptables command
+            import subprocess
+            cmd = ["iptables", "-A", "OUTPUT", "-d", target_ip, "-j", "DROP"]
+            
+            self.logger.warning(f"⚡ Executing: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            
+            if result.returncode == 0:
+                success_msg = f"✅ Network traffic to {target_ip} blocked successfully"
+                self.logger.warning(success_msg)
+                await self._show_action_notification("Network Blocked", success_msg)
+            else:
+                error_msg = f"❌ Failed to block network to {target_ip}: {result.stderr}"
+                self.logger.error(error_msg)
+                await self._show_action_notification("Network Block Failed", error_msg)
+                
+        except Exception as e:
+            error_msg = f"❌ Error executing block network action: {e}"
+            self.logger.error(error_msg)
+            await self._show_action_notification("Network Block Error", error_msg)
+    
+    async def _execute_quarantine_file_action(self, action: Dict[str, Any], original_event: EventData):
+        """Execute quarantine file action"""
+        try:
+            file_path = action.get('file_path')
+            if not file_path:
+                self.logger.error("❌ No file path provided for quarantine_file action")
+                return
+            
+            self.logger.warning(f"🎯 QUARANTINING FILE ON LINUX:")
+            self.logger.warning(f"   📁 File Path: {file_path}")
+            
+            # Create quarantine directory
+            import subprocess
+            import os
+            quarantine_dir = "/tmp/edr_quarantine"
+            os.makedirs(quarantine_dir, exist_ok=True)
+            
+            # Move file to quarantine
+            filename = os.path.basename(file_path)
+            quarantine_path = os.path.join(quarantine_dir, filename)
+            cmd = ["mv", file_path, quarantine_path]
+            
+            self.logger.warning(f"⚡ Executing: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            
+            if result.returncode == 0:
+                success_msg = f"✅ File {filename} quarantined successfully"
+                self.logger.warning(success_msg)
+                await self._show_action_notification("File Quarantined", success_msg)
+            else:
+                error_msg = f"❌ Failed to quarantine file {filename}: {result.stderr}"
+                self.logger.error(error_msg)
+                await self._show_action_notification("File Quarantine Failed", error_msg)
+                
+        except Exception as e:
+            error_msg = f"❌ Error executing quarantine file action: {e}"
+            self.logger.error(error_msg)
+            await self._show_action_notification("File Quarantine Error", error_msg)
+    
+    async def _show_action_notification(self, title: str, message: str):
+        """Show notification for action result"""
+        try:
+            if self.security_notifier and self.security_notifier.enabled:
+                # Create simple alert for action result
+                alert_obj = type('Alert', (), {
+                    'alert_id': f'action_{int(time.time())}',
+                    'title': title,
+                    'rule_name': 'Action Result',
+                    'rule_description': '',
+                    'threat_description': message,
+                    'severity': 'Info',
+                    'risk_score': 0,
+                    'timestamp': datetime.now(),
+                    'requires_acknowledgment': False,
+                    'display_popup': True,
+                    'play_sound': False,
+                    'action_required': False,
+                    'event_details': {}
+                })()
+                
+                await self.security_notifier.handle_security_alert(alert_obj)
+        except Exception as e:
+            self.logger.error(f"❌ Error showing action notification: {e}")
+
     async def _worker_loop(self, worker_id: int):
         """✅ FIXED: Worker loop with proper shutdown handling"""
         self.logger.info(f"👷 Worker {worker_id} started")
@@ -391,128 +661,61 @@ class EventProcessor:
             
             start_time = time.time()
             
-            # Log batch details
-            self.logger.info(f"📦 Processor {processor_id}: Processing batch of {len(batch)} events")
-            
-            # Validate each event before submission
-            valid_events = []
-            invalid_events = []
-            for i, event in enumerate(batch):
+            # Process each event in batch
+            for event in batch:
                 try:
-                    # Check if event has agent_id
-                    if not event.agent_id:
-                        invalid_events.append((i, event, "Missing agent_id"))
-                        continue
-                    
-                    # Try to convert to dict to catch any serialization issues
-                    try:
-                        event_dict = event.to_dict()
-                        if 'error' in event_dict:
-                            invalid_events.append((i, event, f"Event conversion error: {event_dict['error']}"))
-                            continue
-                        valid_events.append(event)
-                    except Exception as dict_error:
-                        invalid_events.append((i, event, f"Dict conversion failed: {dict_error}"))
-                        continue
-                        
-                except Exception as validation_error:
-                    invalid_events.append((i, event, f"Validation error: {validation_error}"))
+                    # Send individual event
+                    success = await self._send_event_immediately(event)
+                    if not success:
+                        self.logger.warning(f"⚠️ Failed to send event in batch: {self._get_event_identifier(event)}")
+                except Exception as e:
+                    self.logger.error(f"❌ Error processing event in batch: {e}")
             
-            # Log validation results
-            if invalid_events:
-                self.logger.error(f"❌ Processor {processor_id}: Found {len(invalid_events)} invalid events:")
-                for i, event, reason in invalid_events[:3]:  # Only log first 3
-                    self.logger.error(f"   Event {i}: {reason}")
-            
-            if not valid_events:
-                self.logger.error(f"❌ Processor {processor_id}: No valid events to submit")
-                return False
-            
-            self.logger.info(f"📦 Processor {processor_id}: Submitting {len(valid_events)} valid events")
-            
-            # Submit batch to server
-            success, response, error = await self.communication.submit_event_batch(valid_events)
-            
-            # Track processing time
-            processing_time = time.time() - start_time
+            processing_time = (time.time() - start_time) * 1000
             self.processing_times.append(processing_time)
             
-            if success:
-                self.logger.info(f"✅ Processor {processor_id}: Batch submitted successfully: {len(valid_events)} events in {processing_time:.2f}s")
-                if response and 'message' in response:
-                    self.logger.info(f"📋 Processor {processor_id}: {response['message']}")
-                return True
-            else:
-                # ✅ FIXED: Check if this was offline mode or fallback response
-                response_str = str(response) if response else ""
-                error_str = str(error) if error else ""
-                
-                if "Offline mode" in error_str:
-                    # Offline mode - this is expected, not an error
-                    self.logger.debug(f"📴 Processor {processor_id}: Offline mode - events stored for later")
-                    return True
-                elif ("Individual:" in response_str or 
-                      "fallback" in error_str.lower() or 
-                      "individual" in response_str.lower()):
-                    # This was a fallback - count as success
-                    self.logger.info(f"✅ Processor {processor_id}: Fallback to individual submission completed")
-                    if response and 'message' in response:
-                        self.logger.info(f"📋 Processor {processor_id}: {response['message']}")
-                    return True
-                else:
-                    # Real failure - but reduce logging in offline mode
-                    if "Offline mode" not in error_str:
-                        self.logger.debug(f"Processor {processor_id}: Batch submission failed: {error}")
-                    return False
+            return True
             
         except Exception as e:
-            self.logger.error(f"❌ Processor {processor_id}: Batch processing error: {e}")
+            self.logger.error(f"❌ Batch processing failed: {e}")
             return False
     
     async def _monitoring_loop(self):
-        """✅ FIXED: Monitor event processor performance with shutdown handling"""
+        """✅ FIXED: Monitoring loop with proper shutdown handling"""
+        self.logger.info("📊 Event processor monitoring started")
+        
         try:
             while self.is_running and not self.shutdown_event.is_set():
                 try:
-                    # Update statistics
+                    # Update and log statistics
                     self._update_stats()
+                    self._log_stats()
                     
-                    # Log statistics every 2 minutes
-                    if int(time.time()) % 120 == 0:
-                        self._log_stats()
-                    
-                    # Wait with cancellation check
-                    try:
-                        await asyncio.wait_for(
-                            self.shutdown_event.wait(),
-                            timeout=30.0
-                        )
-                        break  # Shutdown requested
-                    except asyncio.TimeoutError:
-                        continue  # Normal timeout, continue monitoring
+                    # Sleep for monitoring interval
+                    await asyncio.sleep(30)  # 30 seconds
                     
                 except asyncio.CancelledError:
-                    self.logger.info("🛑 Monitoring loop cancelled")
+                    self.logger.info("📊 Monitoring cancelled")
                     break
                 except Exception as e:
                     self.logger.error(f"❌ Monitoring error: {e}")
-                    await asyncio.sleep(30)
+                    await asyncio.sleep(5)
                     
         except Exception as e:
-            self.logger.error(f"❌ Monitoring loop failed: {e}")
+            self.logger.error(f"❌ Monitoring failed: {e}")
+        finally:
+            self.logger.info("📊 Event processor monitoring stopped")
     
     def _update_stats(self):
         """Update processing statistics"""
         try:
             # Calculate processing rate
             if self.processing_times:
-                avg_time = sum(self.processing_times) / len(self.processing_times)
-                self.stats.processing_rate = 1.0 / max(avg_time, 0.001)  # events per second
+                self.stats.processing_rate = sum(self.processing_times) / len(self.processing_times)
             
             # Calculate queue utilization
-            queue_size = self.event_queue.qsize()
-            self.stats.events_queued = queue_size
-            self.stats.queue_utilization = queue_size / self.max_queue_size
+            if self.max_queue_size > 0:
+                self.stats.queue_utilization = (self.event_queue.qsize() / self.max_queue_size) * 100
             
             self.stats.last_processed = datetime.now()
             
@@ -522,82 +725,83 @@ class EventProcessor:
     def _log_stats(self):
         """Log processing statistics"""
         try:
-            self.logger.info("📊 Event Processor Statistics:")
+            self.logger.info(f"📊 Event Processor Stats:")
             self.logger.info(f"   📥 Events Received: {self.stats.events_received}")
             self.logger.info(f"   📤 Events Sent: {self.stats.events_sent}")
             self.logger.info(f"   ❌ Events Failed: {self.stats.events_failed}")
-            self.logger.info(f"   📊 Queue Size: {self.stats.events_queued}/{self.max_queue_size}")
-            self.logger.info(f"   ⚡ Processing Rate: {self.stats.processing_rate:.2f} events/sec")
-            self.logger.info(f"   📊 Queue Utilization: {self.stats.queue_utilization:.1%}")
+            self.logger.info(f"   📦 Queue Size: {self.event_queue.qsize()}/{self.max_queue_size}")
+            self.logger.info(f"   ⚡ Processing Rate: {self.stats.processing_rate:.1f}ms")
+            self.logger.info(f"   📊 Queue Utilization: {self.stats.queue_utilization:.1f}%")
             
         except Exception as e:
             self.logger.debug(f"Error logging stats: {e}")
     
     async def _flush_queues(self):
-        """✅ FIXED: Flush remaining events from queues with timeout"""
+        """Flush remaining events in queues"""
         try:
-            self.logger.info("🔄 Flushing event queues...")
-            
-            events_flushed = 0
-            flush_timeout = 5.0  # 5 second timeout for flushing
-            
-            # Flush event queue with timeout
-            start_time = time.time()
-            while not self.event_queue.empty() and (time.time() - start_time) < flush_timeout:
+            # Flush event queue
+            remaining_events = []
+            while not self.event_queue.empty():
                 try:
                     event = self.event_queue.get_nowait()
-                    # Try to send immediately
-                    success, _, _ = await self.communication.submit_event(event)
-                    if success:
-                        events_flushed += 1
+                    remaining_events.append(event)
                 except asyncio.QueueEmpty:
                     break
-                except Exception as e:
-                    self.logger.debug(f"Error flushing event: {e}")
-                    break
             
-            # Flush batch queue with timeout
-            start_time = time.time()
-            while not self.batch_queue.empty() and (time.time() - start_time) < flush_timeout:
+            if remaining_events:
+                self.logger.info(f"📤 Flushing {len(remaining_events)} remaining events...")
+                for event in remaining_events:
+                    try:
+                        await self._send_event_immediately(event)
+                    except Exception as e:
+                        self.logger.error(f"❌ Error flushing event: {e}")
+            
+            # Flush batch queue
+            remaining_batches = []
+            while not self.batch_queue.empty():
                 try:
-                    batch_item = self.batch_queue.get_nowait()
-                    for event in batch_item['batch']:
-                        try:
-                            success, _, _ = await self.communication.submit_event(event)
-                            if success:
-                                events_flushed += 1
-                        except Exception as e:
-                            self.logger.debug(f"Error flushing batch event: {e}")
-                            break
+                    batch = self.batch_queue.get_nowait()
+                    remaining_batches.append(batch)
                 except asyncio.QueueEmpty:
                     break
-                except Exception as e:
-                    self.logger.debug(f"Error flushing batch: {e}")
-                    break
             
-            self.logger.info(f"🔄 Flushed {events_flushed} events")
+            if remaining_batches:
+                self.logger.info(f"📦 Flushing {len(remaining_batches)} remaining batches...")
+                for batch in remaining_batches:
+                    try:
+                        await self._process_batch(0, batch)
+                    except Exception as e:
+                        self.logger.error(f"❌ Error flushing batch: {e}")
             
         except Exception as e:
             self.logger.error(f"❌ Error flushing queues: {e}")
     
     def get_stats(self) -> Dict[str, Any]:
-        """Get processing statistics"""
-        return {
-            'events_received': self.stats.events_received,
-            'events_sent': self.stats.events_sent,
-            'events_failed': self.stats.events_failed,
-            'events_queued': self.stats.events_queued,
-            'processing_rate': self.stats.processing_rate,
-            'queue_utilization': self.stats.queue_utilization,
-            'last_processed': self.stats.last_processed.isoformat(),
-            'batch_size': self.batch_size,
-            'max_queue_size': self.max_queue_size,
-            'num_workers': self.num_workers,
-            'num_batch_processors': self.num_batch_processors,
-            'is_running': self.is_running,
-            'agent_id': self.agent_id,
-            'success_rate': (self.stats.events_sent / max(self.stats.events_received, 1)) * 100
-        }
+        """Get detailed event processor statistics"""
+        try:
+            return {
+                'processor_type': 'Linux_Event_Processor',
+                'is_running': self.is_running,
+                'agent_id': self.agent_id,
+                'events_received': self.stats.events_received,
+                'events_sent': self.stats.events_sent,
+                'events_failed': self.stats.events_failed,
+                'events_queued': self.event_queue.qsize(),
+                'processing_rate_ms': self.stats.processing_rate,
+                'queue_utilization_percent': self.stats.queue_utilization,
+                'last_processed': self.stats.last_processed.isoformat() if self.stats.last_processed else None,
+                'worker_tasks': len(self.worker_tasks),
+                'batch_processor_tasks': len(self.batch_processor_tasks),
+                'batch_size': self.batch_size,
+                'batch_timeout': self.batch_timeout,
+                'max_queue_size': self.max_queue_size,
+                'shutdown_event_set': self.shutdown_event.is_set(),
+                'security_notifier_enabled': self.security_notifier.enabled if self.security_notifier else False,
+                'linux_event_processing': True
+            }
+        except Exception as e:
+            self.logger.error(f"❌ Error getting stats: {e}")
+            return {'error': str(e)}
 
 # Backward compatibility aliases
 LinuxEventProcessor = EventProcessor
