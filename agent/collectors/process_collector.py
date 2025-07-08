@@ -232,9 +232,9 @@ class EnhancedLinuxProcessCollector(LinuxBaseCollector):
                             self.stats['process_termination_events'] += 1
                             self._increment_event_count()
                             
-                        # Log process termination
-                        agent_id_short = self.agent_id[:8] if self.agent_id else 'unknown'
-                        self.logger.info(f"🐧 Linux Process Event: Terminated - Agent: {agent_id_short}...")
+                            # Log process termination
+                            agent_id_short = self.agent_id[:8] if self.agent_id else 'unknown'
+                            self.logger.info(f"🐧 Linux Process Event: Terminated - Agent: {agent_id_short}...")
                         del self.monitored_processes[pid]
             
             # Update tracking
