@@ -57,10 +57,13 @@ from agent.schemas.events import EventData
 class LinuxFileEventHandler:
     """Linux file system event handler using inotify - FIXED VERSION"""
     def __init__(self, collector, loop):
+        # Initialize parent if watchdog is available
+        if WATCHDOG_AVAILABLE and hasattr(FileSystemEventHandler, '__init__'):
+            super().__init__()
         self.collector = collector
         self.logger = collector.logger
         self.loop = loop
-        
+    
     def on_modified(self, event):
         """Handle file modification events"""
         if not event.is_directory:
@@ -72,7 +75,7 @@ class LinuxFileEventHandler:
                     )
             except Exception as e:
                 self.logger.error(f"❌ File event handling error: {e}")
-                
+    
     def on_created(self, event):
         """Handle file creation events"""
         if not event.is_directory:
@@ -84,7 +87,7 @@ class LinuxFileEventHandler:
                     )
             except Exception as e:
                 self.logger.error(f"❌ File event handling error: {e}")
-                
+    
     def on_deleted(self, event):
         """Handle file deletion events"""
         if not event.is_directory:
@@ -96,7 +99,7 @@ class LinuxFileEventHandler:
                     )
             except Exception as e:
                 self.logger.error(f"❌ File event handling error: {e}")
-                
+    
     def on_moved(self, event):
         """Handle file move events"""
         if not event.is_directory:
@@ -108,6 +111,21 @@ class LinuxFileEventHandler:
                     )
             except Exception as e:
                 self.logger.error(f"❌ File move event handling error: {e}")
+    
+    def dispatch(self, event):
+        """Dispatch file system events - required by watchdog"""
+        try:
+            if hasattr(event, 'event_type'):
+                if event.event_type == 'modified':
+                    self.on_modified(event)
+                elif event.event_type == 'created':
+                    self.on_created(event)
+                elif event.event_type == 'deleted':
+                    self.on_deleted(event)
+                elif event.event_type == 'moved':
+                    self.on_moved(event)
+        except Exception as e:
+            self.logger.error(f"❌ Event dispatch error: {e}")
 
 
 class LinuxFileCollector(LinuxBaseCollector):
@@ -251,25 +269,27 @@ class LinuxFileCollector(LinuxBaseCollector):
                     self.observer = Observer
                 else:
                     self.observer = Observer()
-                self.event_handler = LinuxFileEventHandler(self, self.loop)
-                # Add watches for monitored paths
-                for path in self.monitor_paths:
-                    if os.path.exists(path):
-                        try:
-                            if Observer is not DummyObserver:
-                                self.observer.schedule(
-                                    self.event_handler,
-                                    path,
-                                    recursive=True
-                                )
-                                self.logger.debug(f"Added inotify watch: {path}")
-                        except Exception as e:
-                            self.logger.warning(f"⚠️ Failed to watch {path}: {e}")
-                if Observer is DummyObserver:
-                    self.observer.start()
-                else:
-                    self.observer.start()
-                self.logger.info("✅ Linux file monitoring started with inotify")
+                    self.event_handler = LinuxFileEventHandler(self, self.loop)
+                    # Add watches for monitored paths
+                    for path in self.monitor_paths:
+                        if os.path.exists(path):
+                            try:
+                                if Observer is not DummyObserver:
+                                    self.observer.schedule(
+                                        self.event_handler,
+                                        path,
+                                        recursive=True
+                                    )
+                                    self.logger.debug(f"Added inotify watch: {path}")
+                            except Exception as e:
+                                self.logger.warning(f"⚠️ Failed to watch {path}: {e}")
+                    
+                    # Start the observer after adding all watches
+                    if Observer is not DummyObserver:
+                        self.observer.start()
+                    else:
+                        self.observer.start()
+                    self.logger.info("✅ Linux file monitoring started with inotify")
             except Exception as e:
                 self.logger.error(f"❌ Failed to start inotify monitoring: {e}")
                 self.inotify_enabled = False
@@ -516,6 +536,17 @@ class LinuxFileCollector(LinuxBaseCollector):
             
             file_lower = file_path.lower()
             if any(pattern in file_lower for pattern in skip_patterns):
+                return True
+            
+            # ✅ FIXED: Skip agent's own log files and agent-related files
+            agent_skip_patterns = [
+                'linux_edr_agent.log', 'edr_agent.log', 'agent.log',
+                'agent_daemon.log', 'security_alerts.log',
+                '.agent_id', 'agent_config.yaml', 'agent_config.yml'
+            ]
+            
+            file_name = os.path.basename(file_path)
+            if any(pattern in file_name for pattern in agent_skip_patterns):
                 return True
             
             # Skip files in /proc, /sys, /dev

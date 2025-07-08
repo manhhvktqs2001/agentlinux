@@ -438,7 +438,7 @@ class EventProcessor:
             await self._show_action_notification("Process Kill Error", error_msg)
     
     async def _execute_block_network_action(self, action: Dict[str, Any], original_event: EventData):
-        """Execute block network action"""
+        """Execute block network action (only block if not already blocked)"""
         try:
             target_ip = action.get('target_ip')
             if not target_ip:
@@ -448,12 +448,22 @@ class EventProcessor:
             self.logger.warning(f"🎯 BLOCKING NETWORK ON LINUX:")
             self.logger.warning(f"   🌐 Target IP: {target_ip}")
             
-            # Execute iptables command
             import subprocess
-            cmd = ["iptables", "-A", "OUTPUT", "-d", target_ip, "-j", "DROP"]
+            # Check if rule already exists
+            check_cmd = ["iptables", "-C", "OUTPUT", "-d", target_ip, "-j", "DROP"]
+            add_cmd = ["iptables", "-A", "OUTPUT", "-d", target_ip, "-j", "DROP"]
+            try:
+                result = subprocess.run(check_cmd, capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    msg = f"⚠️ IP {target_ip} đã bị block, không cần block lại."
+                    self.logger.warning(msg)
+                    await self._show_action_notification("Network Already Blocked", msg)
+                    return
+            except Exception:
+                pass  # Nếu rule chưa tồn tại, sẽ tiếp tục block
             
-            self.logger.warning(f"⚡ Executing: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            self.logger.warning(f"⚡ Executing: {' '.join(add_cmd)}")
+            result = subprocess.run(add_cmd, capture_output=True, text=True, timeout=10)
             
             if result.returncode == 0:
                 success_msg = f"✅ Network traffic to {target_ip} blocked successfully"
